@@ -527,7 +527,10 @@ def ask_expert(question: str, kind: str = "auto") -> str:
     """
     s = _settings or Settings.load()
     kind = (kind or "auto").lower()
-    msgs = [{"role": "system", "content": "Answer clearly and correctly. Keep it short unless asked for more."},
+    msgs = [{"role": "system", "content": "Answer clearly and correctly. Keep it short unless asked for more. "
+                                          "The voice assistant on the user's PC asks you this and does any "
+                                          "actions on the PC itself: just answer the question, and don't say "
+                                          "what you can or can't do on the PC."},
             {"role": "user", "content": question}]
     a = ask(s, msgs, task="voice", expert=kind if kind in EXPERTS else None, online_first=kind == "online",
             big=None if kind == "online" else False)
@@ -545,7 +548,9 @@ def describe_steps(steps: list[tuple[str, dict]]) -> str:
              "make_movie": "started a movie", "make_code_project": "wrote the files",
              "change_code_project": "changed the files",
              "open_in_vs_code": "opened VS Code", "explain_project": "read the code",
-             "remember": "wrote it in your brain", "recall": "looked in your notes"}
+             "remember": "wrote it in your brain", "recall": "looked in your notes",
+             "pc_info": "looked at this PC", "list_folder": "looked in the folder",
+             "find_files": "looked for files", "read_text_file": "read the file"}
     out = []
     for name, args in steps:
         if name == "web_search":

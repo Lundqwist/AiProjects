@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 import urllib.request
 import wave
@@ -41,7 +42,28 @@ STEP_NAMES = {"web_search": "Searching the web…", "read_page": "Reading a web 
               "make_song": "Starting a song…", "make_movie": "Starting a movie…",
               "make_code_project": "Writing the files…", "change_code_project": "Changing the files…",
               "open_in_vs_code": "Opening VS Code…",
-              "explain_project": "Reading the code…"}
+              "explain_project": "Reading the code…", "pc_info": "Looking at this PC…",
+              "list_folder": "Looking in the folder…", "find_files": "Looking for files…",
+              "read_text_file": "Reading the file…"}
+# Small models fall back on their training ("As an AI I can't access your computer") even when a tool
+# for it is offered: such an answer, given without trying a tool, is sent back once with a reminder
+REFUSAL = re.compile(
+    r"\b(I am|I'm) (just |only )?an? (AI|language model)\b|"
+    r"\b(I )?(can ?not|can't|don't have the (ability|capability)|do not have the (ability|capability)|"
+    r"am (not able|unable)|'m (not able|unable)|have no (way|access))\b[^.]{0,80}"
+    r"\b(access|run|execute|interact|reach|see|list|open|read|control|browse|check|look)\b|"
+    r"\b(Jag är (bara )?en AI|jag kan inte|jag har inte (möjlighet|tillgång))\b|"
+    # ...or promises to do it ("Let me check your folders.") and then stops without calling a tool
+    r"\b(let me|I'll|I will|I am going to|I'm going to|låt mig|jag ska)\s+(now\s+)?"
+    r"(check|look|search|find|see|open|read|run|kolla|titta|söka|leta|öppna|läsa)\b", re.I)
+# Refusals that are right: these are never allowed, so they are not sent back
+RIGHTLY_REFUSED = re.compile(r"\b(delet|remov|eras|send|email|e-mail|messag|pay|purchas|buy|setting|password|"
+                             r"ta bort|radera|skicka|betal|köp|inställning|lösenord)", re.I)
+NUDGE = ("(Note from AI Workbench: you said you can't, or that you would, without calling a tool. You run on "
+         "this PC and these "
+         "tools are offered to you: {tools}. Use the one that fits and answer from its result. Only if none of "
+         "them can do it, say so in one plain sentence, without naming tools or making any up; never say you "
+         "are an AI without access.)")
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:
 answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbols.
@@ -217,10 +239,23 @@ class Assistant:
         self._trim_history()
         self.history.append({"role": "user", "content": text + hint})
         self.last_steps = []  # (tool, arguments) used for this answer, so the screen can say where it came from
+        nudged = False
         for n in range(1, 7):  # room for search -> read a page or two -> CV before the spoken answer
             self.on_step("Thinking…")
             # web pages and the CV are long: the default context would cut off the conversation
             msg = self._chat(round_no=n)
+            if not msg.tool_calls and not nudged and not self.last_steps and TOOLS \
+                    and REFUSAL.search(msg.content or "") \
+                    and not RIGHTLY_REFUSED.search(text + " " + (msg.content or "")):
+                nudged = True  # once: a second "can't" stands, it may be true
+                with self.span("guard", "Said it can't without trying a tool: asked again",
+                               refused=(msg.content or "").strip()):
+                    pass
+                self.history.append({"role": "user", "content": NUDGE.format(tools=", ".join(TOOLS))})
+                continue
+            if nudged and not msg.tool_calls:  # the reminder isn't part of the conversation
+                self.history = [m for m in self.history
+                                if not (isinstance(m, dict) and m.get("content", "").startswith("(Note from AI Workbench"))]
             self.history.append(msg)
             if not msg.tool_calls:
                 return (msg.content or "").strip()

@@ -34,6 +34,7 @@ KINDS = {  # kind → (label, colour)
     "tts": ("Speaking", "#f48fb1"),
     "filing": ("Filing into the wiki", "#5ce1e6"),
     "learn": ("Learning rules", "#7ddc9a"),
+    "guard": ("Wrong refusal caught", "#ff8a80"),
     "step": ("Step", "#9fb0cc"),
 }
 MAX_RUNS = 100

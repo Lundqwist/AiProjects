@@ -1,7 +1,9 @@
 """What the assistant may do on this PC and network, and how it asks first.
 
 Three levels:
-  free     runs at once:  open an allowed program, check status, read tasks
+  free     runs at once:  open an allowed program, check status, read tasks, and read-only looks at
+           this PC: its name, IP, uptime, CPU/memory/disk use, and the folders and text files in
+           the user folder and the code folders (never hidden folders, AppData or key/password files)
   confirm  asks on screen first (a click, never by voice, so a TV or a visitor can't say yes):
            add or finish a task, restart a container, play/pause and other media keys,
            and opening a program that isn't allowed yet ("Allow once" / "Always allow")
@@ -254,5 +256,172 @@ def media(action: str) -> str:
     return f"Pressed {action}."
 
 
+# ---- this PC: information, folders and files (read-only) ----------------------------------
+# Only the user's own folders, and never anything that looks like a key, password or token
+SECRET_NAMES = re.compile(r"^\.env|secret|token|password|passwd|credential|\.pem$|\.key$|\.pfx$|\.p12$|"
+                          r"^id_(rsa|ed25519|ecdsa|dsa)|\.kdbx$|known_hosts|authorized_keys", re.I)
+HIDDEN_PARTS = {"appdata", "ntuser.dat"}
+TEXT_EXT = {".txt", ".md", ".log", ".csv", ".json", ".xml", ".yml", ".yaml", ".ini", ".cfg", ".toml", ".html",
+            ".htm", ".css", ".js", ".ts", ".jsx", ".tsx", ".py", ".cs", ".csproj", ".sln", ".cpp", ".c", ".h",
+            ".hpp", ".java", ".ps1", ".bat", ".cmd", ".sh", ".sql", ".lua", ".toc", ".srt", ".gitignore"}
+KNOWN = {"downloads": "Downloads", "documents": "Documents", "desktop": "Desktop", "pictures": "Pictures",
+         "music": "Music", "videos": "Videos", "home": "", "hämtade filer": "Downloads",
+         "dokument": "Documents", "skrivbordet": "Desktop", "bilder": "Pictures", "musik": "Music"}
+
+
+def _roots() -> list:
+    from pathlib import Path
+    home = Path.home()
+    roots = [home]
+    for extra in [getattr(_settings, "code_projects_dir", "")] + list(getattr(_settings, "code_roots", []) or []):
+        if extra:
+            roots.append(Path(extra))
+    return [r.resolve() for r in roots if r.exists()]
+
+
+def _resolve(path: str):
+    """A path the assistant may look at, or a reason why not. 'downloads' etc. are the user's folders."""
+    from pathlib import Path
+    raw = (path or "").strip().strip('"')
+    known = KNOWN.get(raw.lower().rstrip("/\\"))
+    p = (Path.home() / known) if known is not None else Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not p.is_absolute():
+        p = Path.home() / p
+    try:
+        p = p.resolve()
+    except OSError:
+        return None, f"Can't read '{path}'."
+    if not any(p == r or r in p.parents for r in _roots()):
+        return None, (f"'{p}' is outside the folders I may look in: your user folder and the code folders "
+                      f"({', '.join(str(r) for r in _roots())}).")
+    rel = p.relative_to(next(r for r in _roots() if p == r or r in p.parents)).parts
+    if any(part.startswith(".") or part.lower() in HIDDEN_PARTS or SECRET_NAMES.search(part) for part in rel):
+        return None, "That is a hidden or private place (settings, keys or passwords): I don't look there."
+    if not p.exists():
+        return None, f"'{p}' doesn't exist."
+    return p, ""
+
+
+def _size(n: float) -> str:
+    for unit in ("bytes", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "bytes" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def pc_info() -> str:
+    """Facts about this PC right now: name, IP address on the home network, Windows version, how long
+    it has been on, CPU and memory use, and free space on each drive. Read-only. Use it for questions
+    such as "what's my IP?", "how much space is left?" or "how busy is my PC?"."""
+    import platform
+    import psutil
+    from datetime import datetime
+    lan = ""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("192.168.50.1", 9))  # no packet is sent: this only picks the network card used
+            lan = sk.getsockname()[0]
+    except OSError:
+        pass
+    vm = psutil.virtual_memory()
+    up = datetime.now() - datetime.fromtimestamp(psutil.boot_time())
+    drives = {}
+    for part in psutil.disk_partitions(all=False):
+        try:
+            u = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        drives[part.device.rstrip("\\")] = f"{_size(u.free)} free of {_size(u.total)}"
+    return json.dumps({
+        "pc_name": socket.gethostname(), "ip_address_on_home_network": lan,
+        "windows": f"{platform.system()} {platform.release()} (build {platform.version()})",
+        "on_for": f"{up.days} days {up.seconds // 3600} h {(up.seconds // 60) % 60} min",
+        "cpu_use": f"{psutil.cpu_percent(interval=0.5):.0f} %",
+        "memory": f"{_size(vm.used)} used of {_size(vm.total)} ({vm.percent:.0f} %)",
+        "drives": drives,
+    }, ensure_ascii=False)
+
+
+def list_folder(path: str = "downloads", newest_first: bool = True) -> str:
+    """List what is in a folder on this PC: the user's own folders (downloads, documents, desktop,
+    pictures, music, videos, or a full path under the user folder or the code folders). Read-only.
+
+    Args:
+        path: downloads, documents, desktop, pictures, music, videos, or a full folder path
+        newest_first: newest first (true) or by name (false)
+    """
+    from datetime import datetime
+    p, why = _resolve(path)
+    if not p:
+        return why
+    if not p.is_dir():
+        return f"'{p}' is a file, not a folder: use read_text_file to read it."
+    items = []
+    try:
+        for e in p.iterdir():
+            if e.name.startswith(".") or SECRET_NAMES.search(e.name) or e.name.lower() in HIDDEN_PARTS:
+                continue
+            try:
+                st = e.stat()
+            except OSError:
+                continue
+            items.append((e, st))
+    except PermissionError:
+        return f"Windows doesn't let me read '{p}'."
+    items.sort(key=(lambda x: -x[1].st_mtime) if newest_first else (lambda x: x[0].name.lower()))
+    shown = [{"name": e.name + ("\\" if e.is_dir() else ""),
+              "size": "" if e.is_dir() else _size(st.st_size),
+              "changed": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")} for e, st in items[:40]]
+    return json.dumps({"folder": str(p), "items": len(items), "shown": shown,
+                       "instruction": "Sum up in one or two sentences; name only a few items, the newest or "
+                                      "the ones asked about."}, ensure_ascii=False)
+
+
+def find_files(name: str, folder: str = "home") -> str:
+    """Find files or folders by (part of) their name under one of the user's folders. Read-only.
+
+    Args:
+        name: part of the name, e.g. "invoice" or "*.pdf"
+        folder: where to look: home (all of the user folder), downloads, documents, desktop, … or a path
+    """
+    import fnmatch
+    p, why = _resolve(folder)
+    if not p:
+        return why
+    pattern = name if any(c in name for c in "*?") else f"*{name}*"
+    hits, seen, start = [], 0, time.time()
+    for dirpath, dirs, files in os.walk(p):
+        dirs[:] = [d for d in dirs if not (d.startswith(".") or d.lower() in HIDDEN_PARTS or
+                                           d in ("node_modules", "bin", "obj", "__pycache__", ".venv", "venv")
+                                           or SECRET_NAMES.search(d))]
+        for f in dirs + files:
+            seen += 1
+            if fnmatch.fnmatch(f.lower(), pattern.lower()) and not SECRET_NAMES.search(f):
+                hits.append(os.path.join(dirpath, f))
+        if len(hits) >= 30 or time.time() - start > 8:
+            break
+    return json.dumps({"looked_in": str(p), "found": hits[:30],
+                       "note": "stopped early: there may be more" if len(hits) >= 30 or time.time() - start > 8
+                       else ""}, ensure_ascii=False)
+
+
+def read_text_file(path: str) -> str:
+    """Read a text file on this PC (notes, Markdown, code, logs, CSV, …) under the user folder or the
+    code folders. Read-only; it can't change or delete anything. Long files are cut short.
+
+    Args:
+        path: the file's full path, e.g. from list_folder or find_files
+    """
+    p, why = _resolve(path)
+    if not p:
+        return why
+    if p.is_dir():
+        return f"'{p}' is a folder: use list_folder."
+    if p.suffix.lower() not in TEXT_EXT and p.name.lower() not in ("readme", "license", "dockerfile"):
+        return f"'{p.name}' isn't a text file I can read (PDFs and documents go in the Documents tab)."
+    text = p.read_text(encoding="utf-8", errors="replace")
+    return f"{p} ({_size(p.stat().st_size)}):\n" + (text[:6000] + "\n…(cut short)" if len(text) > 6000 else text)
+
+
 TOOLS = {f.__name__: f for f in (open_program, check_status, add_task, complete_task,
-                                 restart_container, media)}
+                                 restart_container, media, pc_info, list_folder, find_files, read_text_file)}

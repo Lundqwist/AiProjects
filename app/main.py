@@ -130,6 +130,11 @@ class MainWindow(QMainWindow):
                              (self.settings_tab, "Settings")):
             self.tabs.addTab(widget, name)
         self.tabs.setCurrentIndex(0)  # always start on the front page
+
+        def to_voice(question: str):
+            self.tabs.setCurrentWidget(self.voice)
+            self.voice.run_turn(text=question)
+        self.experts.hand_off = to_voice
         header = HeaderBand("Local AI with Ollama  ·  lundqwist.se")
         header.home_clicked.connect(lambda: self.tabs.setCurrentIndex(0))
         central = QWidget()

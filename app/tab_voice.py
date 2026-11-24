@@ -54,7 +54,11 @@ You CAN create files and code: websites, programs, scripts, any project (make_co
 user's work folder and opens it in Visual Studio Code), change or add files in those projects later
 (change_code_project), open a project in VS Code (open_in_vs_code) and explain a project (explain_project).
 Never say you can't create files or websites: use make_code_project. Each result says who made it: tell the user
-(e.g. "Painted on this PC by SDXL-Turbo")."""
+(e.g. "Painted on this PC by SDXL-Turbo").
+You CAN look at this PC (read-only): pc_info for its name, IP address, uptime, CPU, memory and free disk space;
+list_folder for what is in Downloads, Documents, Desktop or another of the user's folders; find_files to find
+files by name; read_text_file to read a text file. Use these instead of telling the user to run ipconfig or open
+File Explorer. You don't run arbitrary commands (no terminal, by design): answer from these tools instead."""
 STALL_SECONDS = 60   # one step taking longer than this turns the bar red
 TURN_LIMIT = 240     # a question still not done after this is given up by itself
 BAR_OK = "QProgressBar::chunk { background: #d4af37; }"

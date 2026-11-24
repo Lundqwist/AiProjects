@@ -5,6 +5,7 @@ Needs Ollama with the default models. Uses its own settings file, so your settin
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -69,6 +70,25 @@ s.apply()
 import wb_access  # noqa: E402
 
 wb_access.configure(s)  # default answer to any permission question: no
+
+# Read-only PC tools: facts, folders, and never hidden or private places
+import voice as _voice  # noqa: E402
+import tab_experts as _experts  # noqa: E402
+
+_info = json.loads(wb_access.pc_info())
+record("access: pc_info", bool(_info.get("pc_name")) and bool(_info.get("drives")), _info.get("ip_address_on_home_network", ""))
+_listed = wb_access.list_folder("downloads")
+record("access: list_folder downloads", _listed.startswith("{") and "Downloads" in _listed, _listed[:80])
+record("access: no hidden or private places",
+       all("hidden or private" in wb_access.list_folder(p) or "doesn't exist" in wb_access.list_folder(p)
+           for p in ("~/.ssh", "~/AppData", "~/.claude-hub")) and "outside" in wb_access.read_text_file(r"C:\Windows\win.ini"))
+record("voice: refusal guard",
+       bool(_voice.REFUSAL.search("I am an AI and do not have the capability to directly interact with your computer"))
+       and bool(_voice.REFUSAL.search("Let me check your folders.")) and not _voice.REFUSAL.search("The capital is Oslo.")
+       and bool(_voice.RIGHTLY_REFUSED.search("Delete everything in Downloads")))
+record("experts: PC jobs go to voice",
+       _experts.needs_voice("I cannot access your file system.") and _experts.needs_voice("```tool_code\nipconfig\n```")
+       and not _experts.needs_voice("The capital of Norway is Oslo."))
 status_log = []
 status = status_log.append
 

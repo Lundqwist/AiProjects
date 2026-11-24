@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -9,6 +10,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                QPlainTextEdit, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
+import voice  # 02-voice, on the path from main.py: its refusal check
 import wb_ai
 import wb_brain
 import wb_code
@@ -22,7 +24,16 @@ SYSTEM = ("You are a helpful expert. Answer correctly and clearly; use Markdown,
           "programs, running the TV, Spotify, adding or finishing Vikunja tasks, checking or restarting the home "
           "lab's services and media keys, are done by the voice assistant in the same program. You can't pass "
           "requests on to it yourself, so if asked for one, say in one sentence that the voice assistant does that: "
-          "type or say the request in the Voice tab (or say \"Hey Luna\"). Don't claim it is impossible.")
+          "type or say the request in the Voice tab (or say \"Hey Luna\"). Don't claim it is impossible.\n"
+          "You have no tools in this chat: never write tool_code, never say you ran a command, and never show "
+          "command output, file lists or PC details you were not given.")
+# An expert that says it can't touch the PC, or pretends it ran something: the voice assistant has the
+# tools for that, so the question is handed over to it
+FAKED = re.compile(r"```\s*tool_code|\bI(?:'ve| have)? (?:just )?(?:run|ran|executed|checked|opened|listed)\b", re.I)
+
+
+def needs_voice(answer: str) -> bool:
+    return bool(voice.REFUSAL.search(answer) or FAKED.search(answer))
 FILES_SYSTEM = """
 You CAN create files. When the user asks for a website, a program, a script or any files, write every file
 COMPLETE in exactly this form, one after another:
@@ -45,6 +56,7 @@ class ExpertsTab(QWidget):
         self.status = status
         self.turns: list[dict] = []   # {"q", "a", "credit", "busy"}
         self.busy = False
+        self.hand_off = None  # set by the main window: hand_off(question) asks the voice assistant
 
         title = QLabel("Experts")
         title.setObjectName("title")
@@ -204,6 +216,14 @@ class ExpertsTab(QWidget):
 
         def done(a: wb_ai.Answer):
             entry["a"], entry["credit"] = a.text, a.credit()
+            if self.hand_off and needs_voice(a.text):
+                # Doing things on the PC is the voice assistant's job: it has the tools and asks first
+                entry["a"] = ("*This needs the PC itself, so it went to the voice assistant, which has the "
+                              "tools for it: its answer is in the **Voice** tab.*")
+                entry["credit"] = f"{a.by} couldn't do it here; handed to the voice assistant"
+                self.status("Handed to the voice assistant")
+                self.hand_off(q)
+                return
             explanation, changes = wb_code.parse(a.text, target)
             if changes:
                 entry["shown"] = explanation   # the files are listed below the chat, not printed in it

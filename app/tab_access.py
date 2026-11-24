@@ -11,7 +11,9 @@ from wb_common import run_in_background
 from wb_settings import Settings
 
 RULES = """<table cellspacing=6>
-<tr><td style='color:#9be59b'><b>Free</b></td><td>open the programs below, check status, read your tasks, the TV</td></tr>
+<tr><td style='color:#9be59b'><b>Free</b></td><td>open the programs below, check status, read your tasks, the TV; look at this PC
+(name, IP, CPU, memory, free space) and list, find and read files in your user folder and code folders (read-only;
+never hidden folders, AppData or key and password files)</td></tr>
 <tr><td style='color:#d4af37'><b>Asks first</b></td><td>open any other program, add or finish a task, restart a container,
 media keys (play/pause, next, volume). The question appears on screen; only a click answers it, never your voice,
 so the TV or a visitor can't say yes. No answer in 90 s means no.</td></tr>
