@@ -152,9 +152,14 @@ def to16k(a, r):
 def feed(a):
     a = np.concatenate([np.zeros(12800, "float32"), a, np.zeros(24000, "float32")])
     a = a + np.random.default_rng(0).normal(0, 0.004, len(a)).astype("float32")
-    for i in range(0, len(a), 1600):
-        vt.wake.feed(a[i:i + 1600])
-        wait(lambda: False, 0.1)
+    # Through the microphone callback, with ONE buffer that is overwritten each block, like
+    # sounddevice does. (Keeping views of that buffer once made every phrase silent.)
+    block = np.zeros((480, 1), "float32")
+    for i in range(0, len(a) - 480, 480):
+        block[:, 0] = a[i:i + 480]
+        vt.wake._callback(block, 480, None, None)
+        if i % 1440 == 0:
+            wait(lambda: False, 0.03)
 
 
 before = len(vt.turns)

@@ -102,8 +102,13 @@ class WakeListener:
     """
 
     def __init__(self, wake_word: str, on_state, on_wake, on_command_audio,
-                 on_heard=None, whisper_size: str = "tiny", device: int | None = None):
+                 on_heard=None, whisper_size: str = "tiny", device: int | None = None,
+                 log_path=None):
         self.wake_word = wake_word
+        self.log_path = log_path
+        self._frames_seen = 0
+        self._peak_since_log = 0.0
+        self._last_heartbeat = time.time()
         self.on_state, self.on_wake = on_state, on_wake
         self.on_command_audio = on_command_audio
         self.on_heard = on_heard or (lambda t: None)
@@ -123,6 +128,21 @@ class WakeListener:
         self._worker = None
         self._stop = threading.Event()
 
+    # ---- diagnostics --------------------------------------------------------------------
+    def log(self, msg: str) -> None:
+        """A small diagnostic log: what the listener heard and did (text only, never audio)."""
+        if not self.log_path:
+            return
+        try:
+            from pathlib import Path
+            p = Path(self.log_path)
+            if p.exists() and p.stat().st_size > 512_000:  # keep it small
+                p.replace(p.with_suffix(".old.log"))
+            with p.open("a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n")
+        except OSError:
+            pass
+
     # ---- life cycle -----------------------------------------------------------------------
     def load(self):
         if self.model is None:
@@ -136,10 +156,23 @@ class WakeListener:
         self._worker.start()
         if use_microphone:
             import sounddevice as sd
+            name = sd.query_devices(self.device if self.device is not None else sd.default.device[0])["name"]
+            self.log(f"start: wake word '{self.wake_word}', microphone {self.device} ({name})")
             self._stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=FRAME,
-                                          device=self.device, callback=lambda d, *_: self.feed(d[:, 0]))
+                                          device=self.device, callback=self._callback)
             self._stream.start()
         self._set_mode("wake")
+
+    def _callback(self, data, frames, time_info, status):
+        # An exception here would silently stop the microphone stream: log it and carry on
+        try:
+            if status:
+                self.log(f"microphone status: {status}")
+            # Copy: sounddevice reuses this buffer for the next block, so keeping a view of it
+            # left every recorded phrase overwritten (silent) by the time it was transcribed
+            self.feed(data[:, 0].copy())
+        except Exception as e:  # noqa: BLE001
+            self.log(f"error in microphone callback: {type(e).__name__}: {e}")
 
     def stop(self):
         self._stop.set()
@@ -169,12 +202,19 @@ class WakeListener:
 
     # ---- audio --------------------------------------------------------------------------
     def feed(self, audio: np.ndarray):
+        audio = np.array(audio, dtype="float32", copy=True)  # never keep views of a caller's buffer
         for i in range(0, len(audio) - FRAME + 1, FRAME):
             self._frame(audio[i:i + FRAME])
 
     def _frame(self, f: np.ndarray):
         rms = float(np.sqrt(np.mean(f * f)))
         self.level = rms
+        self._frames_seen += 1
+        self._peak_since_log = max(self._peak_since_log, rms)
+        if time.time() - self._last_heartbeat > 60:  # proof of life, once a minute
+            self.log(f"alive: {self._frames_seen} frames, loudest {self._peak_since_log:.4f}, "
+                     f"noise {self.noise:.4f}, mode {self.mode}, paused {self.paused}")
+            self._last_heartbeat, self._peak_since_log = time.time(), 0.0
         if self.paused:
             return
         if self.mode == "command" and not self._in_speech and time.time() > self._command_deadline:
@@ -201,7 +241,7 @@ class WakeListener:
                 try:
                     self._jobs.put_nowait((self.mode, audio, cut))
                 except queue.Full:
-                    pass  # still busy with earlier speech: skip this burst
+                    self.log("busy: skipped a burst of speech")  # still working on earlier speech
 
     def _reset_segment(self):
         self._segment, self._preroll = [], []
@@ -226,34 +266,49 @@ class WakeListener:
             job = self._jobs.get()
             if job is None:
                 return
-            mode, audio, cut = job
-            if self.paused:
-                continue
-            if mode == "command":
-                self.pause()  # the app resumes us when it has answered
-                self.on_command_audio(audio, "")
-                continue
-            text, _lang = self.transcribe(audio)
-            if text:
-                self.on_heard(text)
-            found, rest = find_wake_word(text, self.wake_word)
-            if not found:
-                continue
-            if len(rest.split()) >= 2:
-                # Said in one breath ("Hey Luna, put CNN on"). Hand over the audio, not tiny's text:
-                # the app re-transcribes it with its better model and removes the wake word.
-                self.pause()
-                self.on_command_audio(audio, rest)
-                continue
-            self.on_wake()
-            # Recognizing the wake word takes ~0.5 s; a command that started meanwhile is already
-            # queued as ordinary speech. It's the command.
             try:
-                queued = self._jobs.get_nowait()
-            except queue.Empty:
-                queued = None
-            if queued:
-                self.pause()
-                self.on_command_audio(queued[1], "")
-                continue
-            self._set_mode("command")  # speech that is still going on, or starts soon, is the command
+                self._handle(*job)
+            except Exception as e:  # noqa: BLE001 - one bad burst must not end the listening
+                self.log(f"error: {type(e).__name__}: {e}")
+                self.paused = False
+                self._set_mode("wake")
+
+    def _handle(self, mode, audio, cut):
+        peak = float(np.abs(audio).max())
+        self.log(f"speech burst: {len(audio) / RATE:.1f}s, peak {peak:.3f}, mode {mode}"
+                 f"{', cut' if cut else ''}{', ignored (paused)' if self.paused else ''}")
+        if self.paused:
+            return
+        if mode == "command":
+            self.log("command recorded after the wake word")
+            self.pause()  # the app resumes us when it has answered
+            self.on_command_audio(audio, "")
+            return
+        text, _lang = self.transcribe(audio)
+        self.log(f"heard: {text!r}")
+        if text:
+            self.on_heard(text)
+        found, rest = find_wake_word(text, self.wake_word)
+        if not found:
+            return
+        if len(rest.split()) >= 2:
+            # Said in one breath ("Hey Luna, put CNN on"). Hand over the audio, not tiny's text:
+            # the app re-transcribes it with its better model and removes the wake word.
+            self.log(f"wake word + command in one breath: {rest!r}")
+            self.pause()
+            self.on_command_audio(audio, rest)
+            return
+        self.log("wake word alone: waiting for the command")
+        self.on_wake()
+        # Recognizing the wake word takes ~0.5 s; a command that started meanwhile is already
+        # queued as ordinary speech. It's the command.
+        try:
+            queued = self._jobs.get_nowait()
+        except queue.Empty:
+            queued = None
+        if queued:
+            self.log("command was already spoken: using it")
+            self.pause()
+            self.on_command_audio(queued[1], "")
+            return
+        self._set_mode("command")  # speech that is still going on, or starts soon, is the command

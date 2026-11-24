@@ -14,7 +14,7 @@ import voice
 import wb_tv_tools
 import wb_wake
 from wb_common import run_in_background
-from wb_settings import Settings
+from wb_settings import SETTINGS_DIR, Settings
 
 RATE = 16000
 
@@ -129,7 +129,8 @@ class VoiceTab(QWidget):
         sig = self.wake_signals
         listener = wb_wake.WakeListener(
             self.s.wake_word, on_state=sig.state.emit, on_wake=sig.wake.emit,
-            on_command_audio=sig.command_audio.emit, on_heard=sig.heard.emit, device=self.s.input_device)
+            on_command_audio=sig.command_audio.emit, on_heard=sig.heard.emit, device=self.s.input_device,
+            log_path=SETTINGS_DIR / "wake.log")
         self.wake_state.setText("Loading the wake-word model…")
         use_mic = self.wake_uses_microphone
 
