@@ -138,9 +138,9 @@ class SettingsTab(QWidget):
         f.addRow("A larger job is over", self.online_min_chars)
         f.addRow("", self.online_for_documents)
 
-        self.providers = QTableWidget(0, 7)
+        self.providers = QTableWidget(0, 8)
         self.providers.setHorizontalHeaderLabels(["On", "Name", "Kind", "Address", "Model", "Key variable",
-                                                  "Monthly tokens (0 = no limit)"])
+                                                  "Monthly tokens (0 = no limit)", "Image model (pictures)"])
         self.providers.horizontalHeader().setStretchLastSection(True)
         self.providers.setMinimumHeight(120)
         self.providers.verticalHeader().hide()
@@ -169,7 +169,8 @@ class SettingsTab(QWidget):
         f.addRow("", self.provider_status)
         f.addRow("", _muted("Tried from the top. Each is used until it runs out of tokens, hits its monthly limit "
                             "(0 = no own limit) or rejects its key; then the next one, and at last this PC. "
-                            "Keys are read from the named user environment variable, never saved here."))
+                            "Keys are read from the named user environment variable, never saved here. Pictures: fill in an image "
+                            "model (e.g. gpt-image-1 for OpenAI) on an OpenAI-compatible row; Claude makes no pictures."))
         return g
 
     def _add_provider(self, p: dict):
@@ -179,7 +180,7 @@ class SettingsTab(QWidget):
         on.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         on.setCheckState(Qt.Checked if p.get("enabled", True) else Qt.Unchecked)
         self.providers.setItem(r, 0, on)
-        for c, k in enumerate(("name", "kind", "base_url", "model", "key_env", "monthly_tokens"), 1):
+        for c, k in enumerate(("name", "kind", "base_url", "model", "key_env", "monthly_tokens", "image_model"), 1):
             self.providers.setItem(r, c, QTableWidgetItem(str(p.get(k, "") or (0 if k == "monthly_tokens" else ""))))
 
     def _move_up(self):
@@ -198,7 +199,7 @@ class SettingsTab(QWidget):
                 continue
             rows.append({"name": cell(1), "kind": cell(2) if cell(2) in ("anthropic", "openai") else "openai",
                          "base_url": cell(3), "model": cell(4), "key_env": cell(5),
-                         "monthly_tokens": int(cell(6)) if cell(6).isdigit() else 0,
+                         "monthly_tokens": int(cell(6)) if cell(6).isdigit() else 0, "image_model": cell(7),
                          "enabled": self.providers.item(r, 0).checkState() == Qt.Checked})
         return rows
 
@@ -225,11 +226,17 @@ class SettingsTab(QWidget):
         self.invoice_inbox = PathPicker(self.s.invoice_inbox)
         self.invoice_output = PathPicker(self.s.invoice_output)
         self.reports_dir = PathPicker(self.s.reports_dir)
+        self.creations_dir = PathPicker(self.s.creations_dir)
+        self.code_projects_dir = PathPicker(self.s.code_projects_dir)
+        self.code_roots = QLineEdit("; ".join(self.s.code_roots))
         self.voices_dir = PathPicker(self.s.voices_dir)
         f.addRow("Document database", self.rag_db)
         f.addRow("Invoice inbox", self.invoice_inbox)
         f.addRow("Invoice output", self.invoice_output)
         f.addRow("Research reports", self.reports_dir)
+        f.addRow("Pictures, music, stories", self.creations_dir)
+        f.addRow("New code projects", self.code_projects_dir)
+        f.addRow("Code folders voice may open", self.code_roots)
         f.addRow("Piper voices", self.voices_dir)
         return g
 
@@ -477,7 +484,8 @@ class SettingsTab(QWidget):
         self.host.setText(s.ollama_host)
         for picker, value in ((self.rag_db, s.rag_db), (self.invoice_inbox, s.invoice_inbox),
                               (self.invoice_output, s.invoice_output), (self.reports_dir, s.reports_dir),
-                              (self.voices_dir, s.voices_dir), (self.eval_dir, s.eval_dir)):
+                              (self.voices_dir, s.voices_dir), (self.eval_dir, s.eval_dir),
+                              (self.creations_dir, s.creations_dir), (self.code_projects_dir, s.code_projects_dir)):
             picker.edit.setText(value)
         self.speed.setValue(int(s.speech_speed * 100))
         self.volume.setValue(int(s.speech_volume * 100))
@@ -491,6 +499,7 @@ class SettingsTab(QWidget):
         self.max_rounds.setValue(s.max_rounds)
         self.min_pages.setValue(s.min_pages)
         self.page_chars.setValue(s.page_chars)
+        self.code_roots.setText("; ".join(s.code_roots))
         self.vikunja_url.setText(s.vikunja_url)
         self.vikunja_token_env.setText(s.vikunja_token_env)
         self.promptfoo_path.setText(s.promptfoo_path)
@@ -517,6 +526,8 @@ class SettingsTab(QWidget):
         s.rag_db, s.invoice_inbox = self.rag_db.text(), self.invoice_inbox.text()
         s.invoice_output, s.reports_dir = self.invoice_output.text(), self.reports_dir.text()
         s.voices_dir, s.eval_dir = self.voices_dir.text(), self.eval_dir.text()
+        s.creations_dir, s.code_projects_dir = self.creations_dir.text(), self.code_projects_dir.text()
+        s.code_roots = [r.strip() for r in self.code_roots.text().split(";") if r.strip()]
         s.input_device = self.input_device.currentData()
         s.output_device = self.output_device.currentData()
         s.whisper_size = self.whisper_size.currentText()

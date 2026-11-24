@@ -37,6 +37,8 @@ import ollama  # noqa: E402
 from tab_documents import DocumentsTab  # noqa: E402
 from tab_eval import EvalTab  # noqa: E402
 from tab_experts import ExpertsTab  # noqa: E402
+from tab_create import CreateTab  # noqa: E402
+from tab_code import CodeTab  # noqa: E402
 from tab_invoices import InvoicesTab  # noqa: E402
 from tab_research import ResearchTab  # noqa: E402
 from tab_settings import SettingsTab  # noqa: E402
@@ -73,6 +75,8 @@ class MainWindow(QMainWindow):
         self.home = HomePage([
             ("Documents", "Chat with your own PDFs and notes, with sources"),
             ("Experts", "Code, reasoning and writing experts, online AI for big jobs"),
+            ("Create", "Pictures, music and stories, saying who made them"),
+            ("Code", "New projects, explanations and fixes, opened in VS Code"),
             ("Voice", "Talk with the assistant: \"Hey Luna\", in English or Swedish"),
             ("Invoices", "Invoice PDFs and photos into checked CSV rows"),
             ("Research", "A cited report from the web, with a fact check"),
@@ -85,6 +89,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.home, "Home")
         self.documents = DocumentsTab(s, status)
         self.experts = ExpertsTab(s, status)
+        self.create = CreateTab(s, status)
+        self.code = CodeTab(s, status)
         self.voice = VoiceTab(s, status)
         self.invoices = InvoicesTab(s, status)
         self.research = ResearchTab(s, status)
@@ -97,7 +103,8 @@ class MainWindow(QMainWindow):
         self.access = AccessTab(s, status)
         self.settings_tab = SettingsTab(s)
         self.settings_tab.saved.connect(self.settings_saved)
-        for widget, name in ((self.documents, "Documents"), (self.experts, "Experts"), (self.voice, "Voice"),
+        for widget, name in ((self.documents, "Documents"), (self.experts, "Experts"), (self.create, "Create"),
+                             (self.code, "Code"), (self.voice, "Voice"),
                              (self.invoices, "Invoices"), (self.research, "Research"),
                              (self.tv, "TV"), (self.access, "Access"), (self.evaluation, "Evaluation"),
                              (self.settings_tab, "Settings")):
@@ -151,6 +158,8 @@ class MainWindow(QMainWindow):
     def settings_saved(self):
         self.voice.apply_settings()
         self.experts.apply_settings()
+        self.create.refresh()
+        self.code.refresh_files()
         self.documents.refresh_sources()
         self.invoices.refresh()
         self.research.load_history()
@@ -186,7 +195,7 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
         # Every part gets its chance to stop, even if one before it fails (a microphone that
         # won't stop used to raise here and leave the rest running)
-        for tab in (self.voice, self.invoices, self.evaluation):
+        for tab in (self.voice, self.invoices, self.evaluation, self.create):
             try:
                 tab.shutdown()
             except Exception:  # noqa: BLE001

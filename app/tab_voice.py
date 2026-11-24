@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPro
 import voice
 import wb_access
 import wb_ai
+import wb_code
+import wb_create
 import wb_spotify
 import wb_spotify_tools
 import wb_tv_tools
@@ -40,7 +42,10 @@ You cannot change the CV itself; to keep a job for later, offer to save it with 
 "Remote job search" (title: job and company, with the link). Never claim you can't search the web.
 For code, maths or logic problems, or long writing (cover letters, translations), use ask_expert and pass on
 its answer in short. Always say where an answer came from: "According to <site>…", "The code expert says…",
-"From your CV…", or that it is from your own knowledge."""
+"From your CV…", or that it is from your own knowledge.
+You CAN make pictures (create_image), music (create_music) and stories (write_story), write a new program and
+open it in Visual Studio Code (make_code_project), open a project in VS Code (open_in_vs_code) and explain a
+project (explain_project). Each result says who made it: tell the user (e.g. "Painted on this PC by SDXL-Turbo")."""
 STALL_SECONDS = 60   # one step taking longer than this turns the bar red
 TURN_LIMIT = 240     # a question still not done after this is given up by itself
 BAR_OK = "QProgressBar::chunk { background: #d4af37; }"
@@ -325,6 +330,10 @@ class VoiceTab(QWidget):
         voice.TOOLS.update(wb_web_tools.TOOLS)  # web search, read a page, read the CV (read-only)
         wb_ai.configure(self.s)
         voice.TOOLS.update(wb_ai.TOOLS)  # hand code, maths and long writing to an expert
+        wb_create.configure(self.s)
+        voice.TOOLS.update(wb_create.TOOLS)  # pictures, music, stories (saved, opened, with who made them)
+        wb_code.configure(self.s)
+        voice.TOOLS.update(wb_code.TOOLS)  # new code projects, open/explain projects in VS Code
         for tools, on in ((wb_tv_tools.TOOLS, bool(self.s.tv_ip)),
                           (wb_spotify_tools.TOOLS, wb_spotify.connected())):
             if on:

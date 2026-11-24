@@ -14,3 +14,6 @@ db/
 03-invoices/output/
 04-research/reports/
 05-eval/fixtures/invoices/
+
+# Image and music models (Create tab), downloaded on first use
+.hf/

@@ -64,6 +64,9 @@ class Settings:
     invoice_inbox: str = str(DATA / "Invoices" / "Inbox")
     invoice_output: str = str(DATA / "Invoices" / "Output")
     reports_dir: str = str(DATA / "Research reports")
+    creations_dir: str = str(DATA / "Creations")          # Images, Music and Stories inside
+    code_projects_dir: str = str(DATA / "Code projects")  # new projects made in the Code tab
+    code_roots: list = field(default_factory=lambda: [str(DATA / "Code projects"), str(ROOT.parent)])  # voice may open these
 
     # Documents
     top_k: int = 5
@@ -156,7 +159,8 @@ class Settings:
         tmp.replace(SETTINGS_FILE)
 
     def ensure_folders(self) -> None:
-        for d in (self.rag_db, self.invoice_inbox, self.invoice_output, self.reports_dir):
+        for d in (self.rag_db, self.invoice_inbox, self.invoice_output, self.reports_dir, self.creations_dir,
+                  self.code_projects_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
 
     def apply(self) -> None:

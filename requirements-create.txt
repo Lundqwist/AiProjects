@@ -1,0 +1,12 @@
+# Image and music creation (AI Workbench → Create tab). Kept apart from requirements.txt so the
+# startup updater never replaces the CUDA build of PyTorch with PyPI's CPU-only one.
+# Install in two steps (about 3 GB; the models download on first use into .hf):
+#   uv pip install --python .venv\Scripts\python.exe -r requirements-create.txt
+#   uv pip install --python .venv\Scripts\python.exe "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu126 --reinstall-package torch
+# (PyPI's newer torch is CPU-only on Windows; the CUDA index lags a version behind.)
+torch==2.14.1
+diffusers>=0.35
+transformers>=4.56
+accelerate>=1.10
+safetensors>=0.6
+scipy>=1.15

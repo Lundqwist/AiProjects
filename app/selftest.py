@@ -154,6 +154,49 @@ import wb_ai  # noqa: E402
 record("online AI without a key is skipped and says why",
        "no key" in wb_ai.provider_state(saved[-1])[1], wb_ai.provider_state(saved[-1])[1])
 
+# Create: a picture, a short song and a story, each with a record of who made it
+s.creations_dir, s.code_projects_dir = str(TMP / "Creations"), str(TMP / "Code projects")
+s.code_roots = [s.code_projects_dir]
+s.ensure_folders()
+from tab_create import CreateTab  # noqa: E402
+
+ct = CreateTab(s, status)
+for page, idea in ((ct.image, "a red apple on a wooden table"), (ct.music, "happy ukulele tune"),
+                   (ct.story, "a cat who learns to swim")):
+    if page is ct.music:
+        page.seconds.setValue(4)
+    if page is ct.story:
+        page.length.setCurrentIndex(0)
+    page.idea.setPlainText(idea)
+    page.create()
+    ok = wait(lambda: not page.busy, 600)
+    made = page.gallery.count() == 1 and page.path is not None and page.path.exists()
+    record(f"create: {page.kind} made, listed and credited", ok and made and "Made by" in page.credit.text(),
+           page.credit.text().split("<br>")[0][:120] or page.state.text()[:120])
+
+# Code: a new project is proposed, saved and opened; a change shows a diff and keeps a backup
+import wb_code  # noqa: E402
+from tab_code import CodeTab  # noqa: E402
+
+opened = []
+wb_code.open_in_vscode = lambda path, file=None: opened.append(str(path))
+cd = CodeTab(s, status)
+cd.create_project("hello-cli", "A Python script hello.py that prints a greeting for the name given as argument.")
+wait(lambda: not cd.busy, 300)
+names = [c.path for c in cd.changes]
+record("code: new project proposed as files", any(n.endswith(".py") for n in names), str(names))
+cd.apply_changes()
+proj = Path(s.code_projects_dir) / "hello-cli"
+record("code: saved and opened in VS Code", any(proj.glob("*.py")) and opened == [str(proj)], str(opened))
+cd.request.setPlainText("Add a --shout option that prints the greeting in capital letters.")
+cd.make_change()
+wait(lambda: not cd.busy, 300)
+changed = [c for c in cd.changes if not c.is_new]
+record("code: change shown as a diff before saving", bool(changed) and "+" in changed[0].diff(),
+       str([c.path for c in cd.changes]))
+cd.apply_changes()
+record("code: replaced files are backed up", any((proj / ".workbench-history").rglob("*.py")))
+
 # 3. Invoices: copy samples to the inbox and process them
 import make_samples  # noqa: E402
 
@@ -317,6 +360,7 @@ record("evaluation: invoices suite", ok and ev.summary.text().startswith("5 of 5
 
 vt.shutdown()
 inv.shutdown()
+ct.shutdown()
 record("no error dialogs", not dialogs, "; ".join(dialogs)[:200])
 failed = [r for r in results if not r[1]]
 print(f"\n{len(results) - len(failed)}/{len(results)} passed. Test folder: {TMP}")

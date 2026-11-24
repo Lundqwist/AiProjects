@@ -410,6 +410,64 @@ def ask(s: Settings, messages: list[dict], *, task: str = "chat", expert: str | 
     return Answer(text, f"{EXPERTS[key].name} ({model})", "on this PC", why, False, (0, 0), notes, thought)
 
 
+# ---- online pictures --------------------------------------------------------------------------
+
+
+def online_image(s: Settings, prompt: str, size: str = "1024x1024") -> tuple[bytes | None, str, list[str]]:
+    """(PNG bytes, who made it, notes) from the first online AI with an image model and tokens left.
+
+    OpenAI-compatible services only (POST /images/generations); Claude makes no pictures.
+    Returns (None, "", notes) when none could, so the caller makes it on this PC instead.
+    """
+    import base64
+    notes: list[str] = []
+    for p in s.online_providers or []:
+        if not p.get("image_model") or p.get("kind") != "openai":
+            continue
+        q = dict(p, model=p["image_model"])
+        ok, state = provider_state(q)
+        if not ok:
+            if p.get("enabled", True):
+                notes.append(f"{p['name']} skipped: {state}")
+            continue
+        body = {"model": p["image_model"], "prompt": prompt, "size": size, "n": 1}
+        if p["image_model"].startswith("dall-e"):
+            body["response_format"] = "b64_json"
+        try:
+            r = httpx.post(p["base_url"].rstrip("/") + "/images/generations", json=body,
+                           headers={"Authorization": f"Bearer {_key(p)}"}, timeout=httpx.Timeout(300, connect=15))
+            _raise_for(r)
+            data = r.json()
+            item = data["data"][0]
+            png = (base64.b64decode(item["b64_json"]) if item.get("b64_json")
+                   else httpx.get(item["url"], timeout=120).content)
+        except OutOfTokens as e:
+            _record(p["name"], block=(_next_month(), "out of credit"), error=str(e))
+            notes.append(f"{p['name']} is out of tokens; moved on")
+            continue
+        except KeyRejected as e:
+            _record(p["name"], bad_key=_fingerprint(_key(p)), error=str(e))
+            notes.append(f"{p['name']} rejected its key; moved on")
+            continue
+        except Busy as e:
+            _record(p["name"], block=(datetime.now() + timedelta(minutes=5), "busy"), error=str(e))
+            notes.append(f"{p['name']} is busy; moved on")
+            continue
+        except (httpx.HTTPError, RuntimeError, KeyError, ValueError, IndexError) as e:
+            notes.append(f"{p['name']} failed: {str(e)[:120]}; moved on")
+            continue
+        used = int((data.get("usage") or {}).get("total_tokens") or 0)
+        _record(p["name"], tokens=used)
+        if used:
+            notes.append(f"{_n(used)} tokens")
+        return png, f"{p['name']} ({p['image_model']}) {_where(p)}", notes
+    return None, "", notes
+
+
+def any_image_provider(s: Settings) -> bool:
+    return any(p.get("image_model") and p.get("kind") == "openai" for p in s.online_providers or [])
+
+
 # ---- a tool for the voice assistant -----------------------------------------------------------
 
 _settings: Settings | None = None
@@ -445,7 +503,9 @@ TOOLS = {"ask_expert": ask_expert}
 def describe_steps(steps: list[tuple[str, dict]]) -> str:
     """'searched the web for “x” · read svt.se · asked the code expert' from the voice assistant's tool calls."""
     names = {"web_search": "searched the web", "read_page": "read", "read_my_cv": "read your CV",
-             "ask_expert": "asked", "open_tasks": "read your Vikunja tasks"}
+             "ask_expert": "asked", "open_tasks": "read your Vikunja tasks", "create_image": "made a picture",
+             "create_music": "made music", "write_story": "wrote a story", "make_code_project": "wrote a program",
+             "open_in_vs_code": "opened VS Code", "explain_project": "read the code"}
     out = []
     for name, args in steps:
         if name == "web_search":

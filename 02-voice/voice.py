@@ -35,7 +35,10 @@ MAX_HISTORY = 30  # messages kept besides the system prompt
 OLD_TOOL_CHARS = 600  # earlier tool results are cut to this
 STEP_NAMES = {"web_search": "Searching the web…", "read_page": "Reading a web page…",
               "read_my_cv": "Reading your CV…", "open_tasks": "Reading your tasks…",
-              "ask_expert": "Asking an expert…"}
+              "ask_expert": "Asking an expert…", "create_image": "Painting a picture…",
+              "create_music": "Composing music…", "write_story": "Writing a story…",
+              "make_code_project": "Writing the program…", "open_in_vs_code": "Opening VS Code…",
+              "explain_project": "Reading the code…"}
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:
 answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbols.
