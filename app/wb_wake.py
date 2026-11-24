@@ -285,12 +285,14 @@ class WakeListener:
             self.on_command_audio(audio, "")
             return
         text, _lang = self.transcribe(audio)
-        self.log(f"heard: {text!r}")
         if text:
             self.on_heard(text)
         found, rest = find_wake_word(text, self.wake_word)
         if not found:
+            # Room talk is never written down: only that something was said, and how much
+            self.log(f"no wake word ({len(text.split())} words)")
             return
+        self.log(f"heard: {text!r}")
         if len(rest.split()) >= 2:
             # Said in one breath ("Hey Luna, put CNN on"). Hand over the audio, not tiny's text:
             # the app re-transcribes it with its better model and removes the wake word.
