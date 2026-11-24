@@ -30,6 +30,11 @@ CHAT_MODEL = "qwen3:8b"  # supports tool calls, and is fast enough for conversat
 WHISPER_SIZE = "small"
 VOICES = {"sv": "sv_SE-alma-medium", "en": "en_US-amy-medium"}  # both female
 RATE = 16000  # Whisper wants 16 kHz mono
+CHAT_TIMEOUT = 120  # seconds for one answer from Ollama (the first one also loads the model)
+MAX_HISTORY = 30  # messages kept besides the system prompt
+OLD_TOOL_CHARS = 600  # earlier tool results are cut to this
+STEP_NAMES = {"web_search": "Searching the web…", "read_page": "Reading a web page…",
+              "read_my_cv": "Reading your CV…", "open_tasks": "Reading your tasks…"}
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:
 answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbols.
@@ -38,14 +43,36 @@ Only say you did something if a tool did it; if a tool says the user did not all
 You cannot delete files, send messages, make payments or change system settings: say so if asked."""
 
 
+_whisper_cache: dict[tuple[str, str], WhisperModel] = {}
+_cuda_failed = False  # once the GPU has failed, never try it again in this program run
+
+
+def _cpu_whisper(size: str) -> WhisperModel:
+    key = (size, "cpu")
+    if key not in _whisper_cache:
+        _whisper_cache[key] = WhisperModel(size, device="cpu", compute_type="int8")
+    return _whisper_cache[key]
+
+
 def load_whisper(size: str = WHISPER_SIZE, device: str = "auto") -> WhisperModel:
-    """device: 'auto' (GPU if it works, else CPU), 'cuda' or 'cpu'."""
-    if device in ("auto", "cuda"):
+    """device: 'auto' (GPU if it works, else CPU), 'cuda' or 'cpu'.
+
+    Models are reused between assistants. Without cuBLAS/cuDNN the GPU model loads, fails on its
+    first use, and a second GPU model in the same run then HANGS on first use instead of failing:
+    so the GPU is tested once here, and not tried again after it failed."""
+    global _cuda_failed
+    if device in ("auto", "cuda") and not _cuda_failed:
+        if (size, "cuda") in _whisper_cache:
+            return _whisper_cache[(size, "cuda")]
         try:
-            return WhisperModel(size, device="cuda", compute_type="float16")
+            model = WhisperModel(size, device="cuda", compute_type="float16")
+            list(model.transcribe(np.zeros(RATE, "float32"), beam_size=1)[0])  # fails now, not later
+            _whisper_cache[(size, "cuda")] = model
+            return model
         except Exception as e:  # missing CUDA/cuDNN DLLs: fall back to CPU
-            print(f"(GPU not available for Whisper: {e}; using CPU)")
-    return WhisperModel(size, device="cpu", compute_type="int8")
+            _cuda_failed = True
+            print(f"(GPU not available for Whisper: {str(e)[:120]}; using CPU)")
+    return _cpu_whisper(size)
 
 
 def mme_devices(kind: str) -> list[tuple[int, str]]:
@@ -104,10 +131,30 @@ class Assistant:
                        for lang, name in (voices or VOICES).items()}
         self.speed, self.volume, self.output_device = speed, volume, output_device
         self.history = [{"role": "system", "content": SYSTEM + ("\n" + extra_system if extra_system else "")}]
+        # A timeout, so a stuck Ollama gives an error instead of waiting forever
+        self.client = ollama.Client(timeout=CHAT_TIMEOUT)
+        self.on_step = lambda text: None  # told about each step (e.g. "Searching the web…")
         print(f"Ready ({time.time() - t:.1f}s to load)")
 
     def reset(self) -> None:
         self.history = self.history[:1]
+
+    def _trim_history(self) -> None:
+        """Keep the conversation short: long histories (web pages, the CV) make every answer slower."""
+        for m in self.history[1:]:  # earlier tool results are only needed in short
+            if isinstance(m, dict) and m.get("role") == "tool" and len(m["content"]) > OLD_TOOL_CHARS:
+                m["content"] = m["content"][:OLD_TOOL_CHARS] + " …(shortened)"
+        if len(self.history) > MAX_HISTORY:
+            rest = self.history[-MAX_HISTORY:]
+            # start at a user message, so no tool result is left without the call that asked for it
+            while rest and not (isinstance(rest[0], dict) and rest[0].get("role") == "user"):
+                rest.pop(0)
+            self.history = self.history[:1] + rest
+
+    def _chat(self, tools: bool = True):
+        return self.client.chat(model=self.chat_model, messages=self.history,
+                                tools=list(TOOLS.values()) if tools else None, think=False,
+                                options={"temperature": 0.5, "num_ctx": 16384}).message
 
     def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
         try:
@@ -118,7 +165,10 @@ class Assistant:
             if "cublas" not in str(e).lower() and "cudnn" not in str(e).lower():
                 raise
             print("(CUDA libraries missing for Whisper; switching to CPU. See README to enable the GPU.)")
-            self.whisper = WhisperModel(self.whisper_size, device="cpu", compute_type="int8")
+            global _cuda_failed
+            _cuda_failed = True
+            _whisper_cache.pop((self.whisper_size, "cuda"), None)
+            self.whisper = _cpu_whisper(self.whisper_size)
             return self.transcribe(audio)
         lang = info.language if info.language in self.voices else "en"
         return text, lang
@@ -126,16 +176,18 @@ class Assistant:
     def reply(self, text: str, lang: str | None = None) -> str:
         # Name the language each turn: otherwise the model keeps the conversation's earlier language
         hint = {"sv": "\n\n(Svara på svenska.)", "en": "\n\n(Reply in English.)"}.get(lang or "", "")
+        self._trim_history()
         self.history.append({"role": "user", "content": text + hint})
         for _ in range(6):  # room for search -> read a page or two -> CV before the spoken answer
+            self.on_step("Thinking…")
             # web pages and the CV are long: the default context would cut off the conversation
-            msg = ollama.chat(model=self.chat_model, messages=self.history, tools=list(TOOLS.values()),
-                              think=False, options={"temperature": 0.5, "num_ctx": 16384}).message
+            msg = self._chat()
             self.history.append(msg)
             if not msg.tool_calls:
-                return msg.content.strip()
+                return (msg.content or "").strip()
             for call in msg.tool_calls:
                 fn = TOOLS.get(call.function.name)
+                self.on_step(STEP_NAMES.get(call.function.name, f"Using {call.function.name}…"))
                 try:
                     result = fn(**call.function.arguments) if fn else "Unknown tool"
                 except Exception as e:
@@ -143,8 +195,8 @@ class Assistant:
                 self.history.append({"role": "tool", "content": result, "tool_name": call.function.name})
         # Out of rounds: answer from what the tools returned instead of giving up
         self.history.append({"role": "user", "content": "Answer now from what you found, without more tools."})
-        msg = ollama.chat(model=self.chat_model, messages=self.history, think=False,
-                          options={"temperature": 0.5, "num_ctx": 16384}).message
+        self.on_step("Writing the answer…")
+        msg = self._chat(tools=False)
         self.history.append(msg)
         return (msg.content or "").strip() or "Sorry, I got stuck."
 
@@ -162,7 +214,20 @@ class Assistant:
                 w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(audio.tobytes())
         else:
             sd.play(audio, rate, device=self.output_device)
-            sd.wait()
+            # Not sd.wait(): a sound device that stops answering (a Bluetooth headset going away)
+            # would make it wait forever. Wait for the sound's length plus a margin, then stop.
+            deadline = time.time() + len(audio) / rate + 5
+            while time.time() < deadline:
+                try:
+                    if not sd.get_stream().active:
+                        return
+                except RuntimeError:  # no stream: already stopped
+                    return
+                time.sleep(0.05)
+            try:
+                sd.stop()
+            except sd.PortAudioError:
+                pass
 
     def turn(self, audio, out: Path | None = None) -> None:
         t0 = time.time()

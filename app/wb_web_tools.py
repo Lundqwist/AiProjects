@@ -27,7 +27,7 @@ def web_search(query: str) -> str:
     Args:
         query: a few search keywords, e.g. "remote junior .NET developer jobs Sweden"
     """
-    results = DDGS().text(query, max_results=6) or []
+    results = DDGS(timeout=10).text(query, max_results=6) or []
     if not results:
         return "No results. Try other keywords."
     return json.dumps([{"title": r["title"], "url": r["href"], "snippet": r["body"]} for r in results],

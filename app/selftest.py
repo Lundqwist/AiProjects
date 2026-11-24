@@ -172,6 +172,36 @@ record("voice: typed English after Swedish gets English", ok and "hej" not in re
 audio, rate = vt.bot.synth("Testing the voice.", "en")
 record("voice: speech synthesis", len(audio) > rate * 0.5, f"{len(audio) / rate:.1f}s at {rate} Hz, speed 1.25")
 
+# Busy bar: shows the steps while working, hides when done
+steps = []
+real_set_step = vt._set_step
+vt._set_step = lambda text: (steps.append(text), real_set_step(text))
+vt.run_turn(text="What is two plus two?")
+shown = wait(lambda: vt.is_busy, 5)
+ok = wait(lambda: len(vt.turns) >= 6 and not vt.is_busy, 120)
+record("voice: busy bar shows steps and hides when done", shown and ok and "Thinking…" in steps,
+       f"steps {list(dict.fromkeys(steps))}, state '{vt.state.text()}'")
+
+# A stuck question: Stop waiting gives up on it, and the next question still gets an answer
+import threading  # noqa: E402
+
+release = threading.Event()
+stuck_bot = vt.bot
+stuck_bot.reply = lambda text, lang=None: (release.wait(60), "too late")[1]
+vt.run_turn(text="This one gets stuck.")
+wait(lambda: vt.is_busy and vt.pending == 1, 5)
+time.sleep(1)
+vt.cancel_btn.click()
+gone = not vt.is_busy and vt.pending == 0
+vt.run_turn(text="Say the word banana.")
+ok = wait(lambda: any(w == "bot" and "banana" in t.lower() for w, t, _ in vt.turns[-1:]), 120)
+release.set()
+wait(lambda: False, 1)  # let the stuck thread finish: its late "too late" must be ignored
+late = any("too late" in t for _, t, _ in vt.turns)
+record("voice: Stop waiting gives up a stuck question, the next one works",
+       gone and ok and not late, f"bar gone {gone}, answered {ok}, late answer shown {late}")
+vt._set_step = real_set_step
+
 # Wake word: spoken audio fed in real time as if from the microphone
 import numpy as np  # noqa: E402
 

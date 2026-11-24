@@ -37,6 +37,10 @@ current (news, prices, job listings). You CAN read the user's CV with read_my_cv
 first, then search for matching jobs and name the best two or three with company and why they fit.
 You cannot change the CV itself; to keep a job for later, offer to save it with add_task in the project
 "Remote job search" (title: job and company, with the link). Never claim you can't search the web."""
+STALL_SECONDS = 60   # one step taking longer than this turns the bar red
+TURN_LIMIT = 240     # a question still not done after this is given up by itself
+BAR_OK = "QProgressBar::chunk { background: #d4af37; }"
+BAR_STALLED = "QProgressBar::chunk { background: #ff6b6b; }"
 PHANTOM_PHRASES = {"thank you", "thanks for watching", "thank you for watching", "you", "bye", "tack",
                    "tack för att du tittade", "tack för att ni tittade", "textning", "musik", "music"}
 
@@ -103,6 +107,25 @@ class VoiceTab(QWidget):
         self.state = QLabel("Loading speech models when you first talk…")
         self.state.setObjectName("muted")
 
+        # Busy bar: moves while a question is being worked on, with the step and a timer, so it's
+        # clear whether the assistant is working or stuck. Turns red when a step takes too long.
+        self.busy = QProgressBar(textVisible=False)
+        self.busy.setRange(0, 0)  # moving back and forth: how long a step takes isn't known
+        self.busy.setFixedHeight(14)
+        self.busy.hide()
+        self.cancel_btn = QPushButton("Stop waiting")
+        self.cancel_btn.setToolTip("Give up on this question and listen again")
+        self.cancel_btn.clicked.connect(lambda: self.abandon_turn("Stopped. Ask again when you like."))
+        self.cancel_btn.hide()
+        self.turn_id = 0          # increases with each question
+        self.abandoned_upto = 0   # questions up to this one are given up: their late results are ignored
+        self.pending = 0          # questions being worked on or waiting
+        self.is_busy = False
+        self.step_text = ""
+        self.turn_started = self.step_started = 0.0
+        self._old_pools: list[QThreadPool] = []  # a stuck thread keeps its pool alive
+        self.busy_timer = QTimer(self, interval=500, timeout=self._tick_busy)
+
         stop = QPushButton("Stop speaking")
         stop.clicked.connect(stop_sound)
         new = QPushButton("New conversation")
@@ -155,6 +178,10 @@ class VoiceTab(QWidget):
         lay.addWidget(self.heard_label)
         lay.addLayout(buttons)
         lay.addWidget(self.meter)
+        busy_row = QHBoxLayout()
+        busy_row.addWidget(self.busy, 1)
+        busy_row.addWidget(self.cancel_btn)
+        lay.addLayout(busy_row)
         lay.addWidget(self.state)
         lay.addWidget(self.view, 1)
         lay.addWidget(self.typed)
@@ -383,9 +410,16 @@ class VoiceTab(QWidget):
         wake_word = self.s.wake_word
         if self.wake:
             self.wake.pause()  # don't listen to ourselves while thinking and talking
+        self.turn_id += 1
+        my_turn = self.turn_id
+        stale = lambda: my_turn <= self.abandoned_upto  # noqa: E731 - given up: ignore what it sends
+        self.pending += 1
+        self._start_busy("Waiting for the previous question…" if self.pending > 1 else "Starting…")
 
         def work(emit):
+            emit("begin")
             bot = self._ensure_bot(emit)
+            bot.on_step = emit  # "Thinking…", "Searching the web…", …
             t0 = time.time()
             if audio is not None:
                 emit("Transcribing…")
@@ -422,17 +456,36 @@ class VoiceTab(QWidget):
             return True
 
         def progress(item):
+            if stale():
+                return
             if isinstance(item, tuple):
                 self.turns.append(item)
                 self.render()
+            elif item == "begin":
+                self.turn_started = time.time()  # the timer counts from when work really starts
+                self._set_step("Starting…")
             elif item == "end":
                 self.set_mode("wake")
                 self.wake_state.setText(f"<span style='color:#9fb0cc'>●</span> Conversation ended. "
                                         f"Say “{self.s.wake_word}” to talk again.")
             else:
-                self.state.setText(item)
+                self._set_step(item)
+
+        def failed(e):
+            if not stale():
+                self.state.setText(f"Error: {e}")
+
+        def finished():
+            if stale():
+                return
+            self.pending = max(0, self.pending - 1)
+            if self.pending == 0:
+                self._stop_busy()
+            self._resume_wake()
 
         def done(result):
+            if stale():
+                return
             if result == "ended":
                 self.state.setText("Conversation ended")
             elif result:
@@ -444,9 +497,65 @@ class VoiceTab(QWidget):
 
         known_lang = lang
         in_conversation = self.mode == "conversation" and audio is not None and not strip_wake
-        run_in_background(work, on_progress=progress, on_result=done,
-                          on_error=lambda e: self.state.setText(f"Error: {e}"),
-                          on_done=self._resume_wake, pool=self.pool)
+        run_in_background(work, on_progress=progress, on_result=done, on_error=failed,
+                          on_done=finished, pool=self.pool)
+
+    # ---- busy bar -------------------------------------------------------------------------
+    def _start_busy(self, text: str):
+        # A flag, not isVisible(): that is False whenever another tab is showing
+        if not self.is_busy:
+            self.is_busy = True
+            self.turn_started = time.time()
+            self.busy.setStyleSheet(BAR_OK)
+            self.busy.show()
+            self.cancel_btn.show()
+            self.busy_timer.start()
+        self._set_step(text)
+
+    def _set_step(self, text: str):
+        self.step_text = text
+        self.step_started = time.time()
+        self.busy.setStyleSheet(BAR_OK)
+        self._tick_busy()
+
+    def _stop_busy(self):
+        self.is_busy = False
+        self.busy_timer.stop()
+        self.busy.hide()
+        self.cancel_btn.hide()
+
+    def _tick_busy(self):
+        if not self.is_busy:
+            return
+        now = time.time()
+        total, step = now - self.turn_started, now - self.step_started
+        if total > TURN_LIMIT:
+            self.abandon_turn(f"No answer after {TURN_LIMIT // 60} minutes, so I gave up on that question. "
+                              "Ask again.")
+            return
+        if step > STALL_SECONDS:
+            self.busy.setStyleSheet(BAR_STALLED)
+            self.state.setText(f"<span style='color:#ff8a80'>{html.escape(self.step_text)} No progress for "
+                               f"{step:.0f} s: it may be stuck. Click Stop waiting to start over.</span>")
+        else:
+            self.state.setText(f"{html.escape(self.step_text)}  ({total:.0f} s)")
+
+    def abandon_turn(self, message: str):
+        """Give up on the question being worked on. A stuck thread can't be stopped, so its results
+        are ignored and new questions go to a fresh worker (and a freshly loaded assistant)."""
+        if self.pending == 0:
+            return
+        self.abandoned_upto = self.turn_id
+        self.pending = 0
+        stop_sound()
+        self.pool.clear()  # questions still waiting in line are dropped too
+        self._old_pools.append(self.pool)
+        self.pool = QThreadPool(self)
+        self.pool.setMaxThreadCount(1)
+        self.bot = None  # the stuck thread may still be using the old one
+        self._stop_busy()
+        self.state.setText(message)
+        self._resume_wake()
 
     def new_conversation(self):
         stop_sound()

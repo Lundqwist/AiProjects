@@ -10,7 +10,7 @@ It opens on a front page in lundqwist.se's navy and gold, like StoryMaker: the L
 |---|---|
 | **Home** | The front page: one card per tab below |
 | **Documents** | Add PDFs, Markdown and text (Add files / Add folder / drag-and-drop), see each file's chunk count, remove files, and chat with answers that cite their sources |
-| **Voice** | Hold to talk (or click to start/stop), live input level, the conversation as text, a box for typed messages, Stop speaking, New conversation |
+| **Voice** | Hold to talk (or click to start/stop), live input level, the conversation as text, a box for typed messages, Stop speaking, New conversation. While a question is worked on, a moving bar shows the step (Transcribing, Thinking, Searching the web, Reading your CV, Speaking) and the seconds so far; it turns red when one step takes over 60 s, *Stop waiting* gives up on the question and listens again, and after 4 minutes it gives up by itself. Web search, page reading and the CV (`wb_web_tools.py`, the public lundqwist.se CV) are tools too |
 | **Invoices** | Add invoices (they're copied to the inbox), process now or watch the inbox, a table of processed invoices, the review list with the reason and a retry button, open the CSV in Excel |
 | **Research** | Ask a question, watch the agent's steps live, read the report, and see the grounding check (numbers/IDs that weren't in any page it read); earlier reports in a list |
 | **TV** | Find a Samsung TV on the network, turn it on (Wake-on-LAN) or off, favourites such as "CNN = Samsung TV Plus, channel 4556" (one click wakes the TV, opens the app and types the channel), open apps, type channel numbers, and a remote (arrows, OK, Back, Home, volume, channels, guide) |
