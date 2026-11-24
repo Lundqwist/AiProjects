@@ -504,7 +504,8 @@ def describe_steps(steps: list[tuple[str, dict]]) -> str:
     """'searched the web for “x” · read svt.se · asked the code expert' from the voice assistant's tool calls."""
     names = {"web_search": "searched the web", "read_page": "read", "read_my_cv": "read your CV",
              "ask_expert": "asked", "open_tasks": "read your Vikunja tasks", "create_image": "made a picture",
-             "create_music": "made music", "write_story": "wrote a story", "make_code_project": "wrote a program",
+             "create_music": "made music", "write_story": "wrote a story", "make_song": "started a song",
+             "make_movie": "started a movie", "make_code_project": "wrote a program",
              "open_in_vs_code": "opened VS Code", "explain_project": "read the code"}
     out = []
     for name, args in steps:

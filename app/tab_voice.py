@@ -43,7 +43,8 @@ You cannot change the CV itself; to keep a job for later, offer to save it with 
 For code, maths or logic problems, or long writing (cover letters, translations), use ask_expert and pass on
 its answer in short. Always say where an answer came from: "According to <site>…", "The code expert says…",
 "From your CV…", or that it is from your own knowledge.
-You CAN make pictures (create_image), music (create_music) and stories (write_story), write a new program and
+You CAN make pictures (create_image), music (create_music), songs with singing (make_song), stories (write_story)
+and narrated movies (make_movie; songs and movies take minutes and open by themselves when ready), write a new program and
 open it in Visual Studio Code (make_code_project), open a project in VS Code (open_in_vs_code) and explain a
 project (explain_project). Each result says who made it: tell the user (e.g. "Painted on this PC by SDXL-Turbo")."""
 STALL_SECONDS = 60   # one step taking longer than this turns the bar red

@@ -10,3 +10,5 @@ transformers>=4.56
 accelerate>=1.10
 safetensors>=0.6
 scipy>=1.15
+imageio-ffmpeg>=0.6   # ffmpeg for Create -> Movie and the Song MP3s
+# Songs with singing (Create -> Song) use ACE-Step 1.5 in its own environment: install-song-maker.ps1

@@ -154,15 +154,21 @@ import wb_ai  # noqa: E402
 record("online AI without a key is skipped and says why",
        "no key" in wb_ai.provider_state(saved[-1])[1], wb_ai.provider_state(saved[-1])[1])
 
-# Create: a picture, a short song and a story, each with a record of who made it
+# Create: a picture, a tune, a sung song, a story and a movie, each with a record of who made it
 s.creations_dir, s.code_projects_dir = str(TMP / "Creations"), str(TMP / "Code projects")
 s.code_roots = [s.code_projects_dir]
 s.ensure_folders()
+import wb_song  # noqa: E402
 from tab_create import CreateTab  # noqa: E402
 
 ct = CreateTab(s, status)
-for page, idea in ((ct.image, "a red apple on a wooden table"), (ct.music, "happy ukulele tune"),
-                   (ct.story, "a cat who learns to swim")):
+jobs = [(ct.image, "a red apple on a wooden table"), (ct.music, "happy ukulele tune"),
+        (ct.song, "a short happy song about coffee"), (ct.story, "a cat who learns to swim"),
+        (ct.movie, "a paper boat that sails to the sea")]
+if not wb_song.installed()[0]:
+    record("create: song (skipped)", True, wb_song.installed()[1])
+    jobs = [j for j in jobs if j[0] is not ct.song]
+for page, idea in jobs:
     if page is ct.music:
         page.seconds.setValue(4)
     if page is ct.story:
@@ -173,6 +179,9 @@ for page, idea in ((ct.image, "a red apple on a wooden table"), (ct.music, "happ
     made = page.gallery.count() == 1 and page.path is not None and page.path.exists()
     record(f"create: {page.kind} made, listed and credited", ok and made and "Made by" in page.credit.text(),
            page.credit.text().split("<br>")[0][:120] or page.state.text()[:120])
+ct.shutdown()  # also stops the song server the song started
+time.sleep(3)
+record("create: song server stopped afterwards", not wb_song._healthy(), "")
 
 # Code: a new project is proposed, saved and opened; a change shows a diff and keeps a backup
 import wb_code  # noqa: E402

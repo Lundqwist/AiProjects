@@ -37,6 +37,7 @@ STEP_NAMES = {"web_search": "Searching the web…", "read_page": "Reading a web 
               "read_my_cv": "Reading your CV…", "open_tasks": "Reading your tasks…",
               "ask_expert": "Asking an expert…", "create_image": "Painting a picture…",
               "create_music": "Composing music…", "write_story": "Writing a story…",
+              "make_song": "Starting a song…", "make_movie": "Starting a movie…",
               "make_code_project": "Writing the program…", "open_in_vs_code": "Opening VS Code…",
               "explain_project": "Reading the code…"}
 

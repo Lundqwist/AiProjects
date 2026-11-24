@@ -14,7 +14,7 @@ import wb_create
 from wb_common import open_path, run_in_background
 from wb_settings import Settings
 
-SUFFIX = {"image": "*.png", "music": "*.wav", "story": "*.md"}
+SUFFIX = {"image": "*.png", "music": "*.wav", "story": "*.md", "song": "*.mp3", "movie": "*.mp4"}
 
 
 class CreatorPage(QWidget):
@@ -107,7 +107,7 @@ class CreatorPage(QWidget):
             return
         self.busy = True
         self.go.setEnabled(False)
-        self.state.setText("Starting…")
+        self.state.setText("Startingâ€¦")
 
         def done(made):
             self.status(f"Made by {made.by}")
@@ -125,8 +125,8 @@ class CreatorPage(QWidget):
 
 class ImagePage(CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "image", "Describe a picture, in English or Swedish: “a fox reading a book by a "
-                                             "campfire, watercolour”")
+        super().__init__(s, status, "image", "Describe a picture, in English or Swedish: â€œa fox reading a book by a "
+                                             "campfire, watercolourâ€")
         self.size = QComboBox()
         self.size.addItems(list(wb_create.SIZES))
         self.improve = QCheckBox("Improve my description first")
@@ -156,8 +156,8 @@ class ImagePage(CreatorPage):
 
 class MusicPage(CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "music", "Describe the music: “calm lo-fi beat with piano and rain”, "
-                                             "“epic orchestral battle theme”")
+        super().__init__(s, status, "music", "Describe the music: â€œcalm lo-fi beat with piano and rainâ€, "
+                                             "â€œepic orchestral battle themeâ€")
         self.seconds = QSpinBox(minimum=3, maximum=30, value=15)
         self.seconds.setSuffix(" seconds")
         self.improve = QCheckBox("Improve my description first")
@@ -174,9 +174,9 @@ class MusicPage(CreatorPage):
         box = QWidget()
         v = QVBoxLayout(box)
         self.music_info = QTextBrowser()
-        play = QPushButton("▶ Play")
+        play = QPushButton("â–¶ Play")
         play.clicked.connect(lambda: self.player.play())
-        stop = QPushButton("■ Stop")
+        stop = QPushButton("â–  Stop")
         stop.clicked.connect(lambda: self.player.stop())
         row = QHBoxLayout()
         row.addWidget(play)
@@ -202,10 +202,139 @@ class MusicPage(CreatorPage):
         self.player.stop()
 
 
+class PlayerMixin:
+    """Play / Stop buttons over a text panel, for songs and movies."""
+
+    def _player(self, video: bool) -> QWidget:
+        from PySide6.QtMultimediaWidgets import QVideoWidget
+        self.player = QMediaPlayer(self)
+        self.audio = QAudioOutput(self)
+        self.player.setAudioOutput(self.audio)
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        if video:
+            self.video_out = QVideoWidget()
+            self.video_out.setMinimumHeight(280)
+            self.player.setVideoOutput(self.video_out)
+            v.addWidget(self.video_out, 3)
+        play = QPushButton("â–¶ Play")
+        play.clicked.connect(lambda: self.player.play())
+        pause = QPushButton("âšâš Pause")
+        pause.clicked.connect(lambda: self.player.pause())
+        stop = QPushButton("â–  Stop")
+        stop.clicked.connect(lambda: self.player.stop())
+        row = QHBoxLayout()
+        for b in (play, pause, stop):
+            row.addWidget(b)
+        row.addStretch()
+        v.addLayout(row)
+        self.info = QTextBrowser()
+        v.addWidget(self.info, 2)
+        return box
+
+    def _load(self, path: Path):
+        self.player.stop()
+        self.player.setSource(QUrl.fromLocalFile(str(path)))
+
+    def shutdown(self):
+        self.player.stop()
+
+
+class SongPage(PlayerMixin, CreatorPage):
+    def __init__(self, s, status):
+        super().__init__(s, status, "song", "What is the song about? â€œa happy summer song about the archipelagoâ€, "
+                                            "â€œen vaggvisa om mÃ¥nenâ€")
+        self.style = QLineEdit()
+        self.style.setPlaceholderText("style (optional), e.g. pop, acoustic guitar, female vocal, 110 BPM")
+        self.length = QComboBox()
+        import wb_song
+        self.length.addItems(list(wb_song.LENGTHS))
+        self.language = QComboBox()
+        self.language.addItems(["English", "Swedish"])
+        self.own = QCheckBox("I wrote the lyrics")
+        self.online = QCheckBox("May use online AI")
+        self.online.setToolTip("Let an online AI write the lyrics while it has tokens; the singing is always made here")
+        for w in (self.style, self.length, self.language, self.own, self.online):
+            self.options.addWidget(w)
+        self.lyrics = QPlainTextEdit()
+        self.lyrics.setPlaceholderText("Your lyrics, with the parts marked:\n[Verse 1]\nâ€¦\n[Chorus]\nâ€¦")
+        self.lyrics.setMaximumHeight(140)
+        self.lyrics.hide()
+        self.own.toggled.connect(self.lyrics.setVisible)
+        self.layout().insertWidget(2, self.lyrics)
+        ok, why = wb_song.installed()
+        if not ok:
+            self.state.setText(f"<span style='color:#ff8a80'>{why}.</span>")
+        self.refresh()
+
+    def make_view(self):
+        return self._player(video=False)
+
+    def show_content(self, path):
+        self._load(path)
+        rec = wb_create.load_record(path)
+        d = rec.details if rec else {}
+        lyrics = str(d.get("lyrics", "")).replace("\n", "  \n")
+        self.info.setMarkdown(f"## {d.get('title', path.stem)}\n\n*{d.get('style', '')}*  \n"
+                              f"{d.get('language', '')} Â· {d.get('seconds', '?')} s"
+                              f"{' Â· ' + str(d['bpm']) + ' BPM' if d.get('bpm') else ''}"
+                              f"{' Â· ' + str(d['key']) if d.get('key') else ''}\n\n{lyrics}")
+
+    def work(self, idea, emit):
+        import wb_song
+        return wb_song.make_song(self.s, idea, self.style.text().strip(), self.language.currentText(),
+                                 self.length.currentText(),
+                                 own_lyrics=self.lyrics.toPlainText() if self.own.isChecked() else "",
+                                 online=True if self.online.isChecked() else None, emit=emit)
+
+
+class MoviePage(PlayerMixin, CreatorPage):
+    def __init__(self, s, status):
+        super().__init__(s, status, "movie", "What is the movie about? â€œa lighthouse keeper who befriends a lost "
+                                             "whaleâ€, â€œen katt som reser till mÃ¥nenâ€")
+        import wb_movie
+        self.length = QComboBox()
+        self.length.addItems(list(wb_movie.LENGTHS))
+        self.look = QComboBox()
+        self.look.addItems(wb_movie.STYLES)
+        self.language = QComboBox()
+        self.language.addItems(["English", "Swedish"])
+        self.language.setToolTip("Language of the narration and subtitles")
+        self.subs = QCheckBox("Subtitles")
+        self.subs.setChecked(True)
+        self.music = QCheckBox("Music")
+        self.music.setChecked(True)
+        self.online = QCheckBox("May use online AI")
+        self.online.setToolTip("Screenplay and pictures online while tokens last; otherwise all made here")
+        for w in (self.length, self.look, self.language, self.subs, self.music, self.online):
+            self.options.addWidget(w)
+        self.options.addStretch()
+        self.refresh()
+
+    def make_view(self):
+        return self._player(video=True)
+
+    def show_content(self, path):
+        self._load(path)
+        rec = wb_create.load_record(path)
+        d = rec.details if rec else {}
+        scenes = "\n".join(f"{i}. {sc.get('narration', '')}" for i, sc in enumerate(d.get("scenes", []), 1))
+        self.info.setMarkdown(f"## {d.get('title', path.stem)}\n\n{d.get('style', '')} Â· {d.get('language', '')} Â· "
+                              f"{d.get('seconds', '?')} s Â· voice {d.get('voice', '?')}\n\n{scenes}\n\n"
+                              f"Scene pictures, narration and subtitles: folder *{d.get('folder', '')}*")
+
+    def work(self, idea, emit):
+        import wb_movie
+        return wb_movie.make_movie(self.s, idea, self.length.currentText(), self.look.currentText(),
+                                   self.language.currentText(), self.subs.isChecked(), self.music.isChecked(),
+                                   online=True if self.online.isChecked() else None, emit=emit)
+
+
 class StoryPage(CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "story", "What is the story about? “a robot who is afraid of the dark”, "
-                                             "“en drake som vill bli kock”")
+        super().__init__(s, status, "story", "What is the story about? â€œa robot who is afraid of the darkâ€, "
+                                             "â€œen drake som vill bli kockâ€")
         self.genre = QLineEdit()
         self.genre.setPlaceholderText("genre, e.g. fantasy, children's, mystery")
         self.length = QComboBox()
@@ -236,18 +365,24 @@ class CreateTab(QWidget):
         title = QLabel("Create")
         title.setObjectName("title")
         ok, gpu = wb_create.cuda_ready()
-        intro = QLabel("Pictures, music and stories. Pictures go to an online image AI while it has tokens, otherwise "
-                       f"SDXL-Turbo paints them here; music is made here with MusicGen; stories are written by the "
-                       f"writing expert, long ones online. Each one says who made it. "
+        intro = QLabel("Pictures, music, songs, stories and movies. Pictures go to an online image AI while it has "
+                       "tokens, otherwise SDXL-Turbo paints them here; music is made here with MusicGen; songs are "
+                       "sung here by ACE-Step from lyrics the writing expert writes; stories are written by the "
+                       "writing expert, long ones online; movies are painted, narrated and scored scene by scene. "
+                       "Each one says who made it. "
                        + (f"Graphics card: {gpu}." if ok else f"<span style='color:#ff8a80'>{gpu}.</span>"))
         intro.setWordWrap(True)
         self.pages = QTabWidget()
         self.image = ImagePage(settings, status)
         self.music = MusicPage(settings, status)
+        self.song = SongPage(settings, status)
         self.story = StoryPage(settings, status)
+        self.movie = MoviePage(settings, status)
         self.pages.addTab(self.image, "Picture")
         self.pages.addTab(self.music, "Music")
+        self.pages.addTab(self.song, "Song")
         self.pages.addTab(self.story, "Story")
+        self.pages.addTab(self.movie, "Movie")
         lay = QVBoxLayout(self)
         lay.addWidget(title)
         lay.addWidget(intro)
@@ -257,12 +392,16 @@ class CreateTab(QWidget):
     def on_made(self, made):
         """A creation from the voice assistant (another thread): refresh the list on the GUI thread."""
         from PySide6.QtCore import QTimer
-        page = {"image": self.image, "music": self.music, "story": self.story}[made.kind]
+        page = {"image": self.image, "music": self.music, "story": self.story, "song": self.song,
+                "movie": self.movie}[made.kind]
         QTimer.singleShot(0, self, lambda: page.refresh(select=made.path))
 
     def refresh(self):
-        for p in (self.image, self.music, self.story):
+        for p in (self.image, self.music, self.song, self.story, self.movie):
             p.refresh()
 
     def shutdown(self):
-        self.music.shutdown()
+        for p in (self.music, self.song, self.movie):
+            p.shutdown()
+        import wb_song
+        wb_song.stop_server()

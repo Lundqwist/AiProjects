@@ -1,9 +1,13 @@
-"""Make pictures, music and stories, and keep a record of who made each one.
+"""Make pictures, music, songs, stories and movies, and keep a record of who made each one.
 
 Pictures: an online AI with an image model while it has tokens (wb_ai.online_image), else
-SDXL-Turbo on this PC's GPU. Music: MusicGen (Meta) on this PC. Stories: the writing expert,
-or an online AI for long ones (wb_ai.ask). Every creation is saved with a .json beside it that
-says what was asked, who made it, where it ran and what was skipped on the way.
+SDXL-Turbo on this PC's GPU. Music: MusicGen (Meta) on this PC. Songs with singing: lyrics by the
+writing expert, sung and played by ACE-Step 1.5 on this PC (its own install in AiProjects\\ace-step,
+run as a local server, see wb_song.py). Stories: the writing expert, or an online AI for long ones
+(wb_ai.ask). Movies: the writing expert writes a screenplay, each scene is painted, narrated by the
+Piper voice and given music, then the scenes are put together with slow camera moves (wb_movie.py).
+Every creation is saved with a .json beside it that says what was asked, who made it, where it ran
+and what was skipped on the way.
 
 The local models download on first use into AiProjects\\.hf (SDXL-Turbo ~7 GB, MusicGen ~2 GB).
 """
@@ -28,7 +32,7 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 IMAGE_MODEL = "stabilityai/sdxl-turbo"
 MUSIC_MODEL = "facebook/musicgen-small"
 SIZES = {"Square": (512, 512, "1024x1024"), "Wide": (768, 512, "1536x1024"), "Tall": (512, 768, "1024x1536")}
-_lock = threading.Lock()  # one GPU job at a time
+_lock = threading.RLock()  # one GPU job at a time (a movie holds it while it paints and composes)
 _pipes: dict[str, object] = {}
 
 
@@ -67,7 +71,8 @@ def load_record(path: Path) -> Made | None:
 
 
 def folder(s: Settings, kind: str) -> Path:
-    p = Path(s.creations_dir) / {"image": "Images", "music": "Music", "story": "Stories"}[kind]
+    p = Path(s.creations_dir) / {"image": "Images", "music": "Music", "story": "Stories", "song": "Songs",
+                                 "movie": "Movies"}[kind]
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -131,7 +136,6 @@ def _image_pipe():
 def make_image(s: Settings, idea: str, size: str = "Square", improve: bool = True, online: bool | None = None,
                seed: int | None = None, emit=lambda m: None) -> Made:
     """online: True = try online first, False = never, None = per the online AI setting (not Off)."""
-    w, h, online_size = SIZES.get(size, SIZES["Square"])
     notes: list[str] = []
     prompt = idea
     if improve:
@@ -139,17 +143,27 @@ def make_image(s: Settings, idea: str, size: str = "Square", improve: bool = Tru
         prompt, writer = image_prompt(s, idea)
         notes.append(f"prompt written from your idea by {writer} on this PC: “{prompt}”")
     out = folder(s, "image") / f"{_stamp()}-{_slug(idea)}.png"
+    data, by, where, details = paint(s, prompt, size, online, notes, seed, emit)
+    out.write_bytes(data)
+    made = Made(out, "image", idea, by, where, notes, {"prompt": prompt, **details})
+    made.save_record()
+    return made
+
+
+def paint(s: Settings, prompt: str, size: str = "Square", online: bool | None = None, notes: list[str] | None = None,
+          seed: int | None = None, emit=lambda m: None) -> tuple[bytes, str, str, dict]:
+    """One picture as PNG bytes: online while an image AI has tokens (if allowed), else SDXL-Turbo here.
+    Returns (png, who made it, where, details) and adds what happened on the way to notes."""
+    import io
+    notes = notes if notes is not None else []
+    w, h, online_size = SIZES.get(size, SIZES["Square"])
     try_online = online if online is not None else s.online_mode != "off"
     if try_online and wb_ai.any_image_provider(s):
         emit("Asking the online image AI…")
         png, by, more = wb_ai.online_image(s, prompt, online_size)
         notes += more
         if png:
-            out.write_bytes(png)
-            made = Made(out, "image", idea, by.rsplit(" online", 1)[0], "online" + by.rsplit(" online", 1)[1],
-                        notes, {"prompt": prompt, "size": online_size})
-            made.save_record()
-            return made
+            return png, by.rsplit(" online", 1)[0], "online" + by.rsplit(" online", 1)[1], {"size": online_size}
         notes.append("no online image AI had tokens left, so the picture was made on this PC")
     ok, why = cuda_ready()
     if not ok:
@@ -166,11 +180,10 @@ def make_image(s: Settings, idea: str, size: str = "Square", improve: bool = Tru
         t = time.time()
         img = pipe(prompt=prompt, num_inference_steps=4, guidance_scale=0.0, width=w, height=h,
                    generator=torch.Generator("cpu").manual_seed(seed)).images[0]
-        img.save(out)
-    made = Made(out, "image", idea, f"SDXL-Turbo ({IMAGE_MODEL})", f"on this PC ({why}, {time.time() - t:.0f} s)",
-                notes, {"prompt": prompt, "size": f"{w}x{h}", "seed": seed, "steps": 4})
-    made.save_record()
-    return made
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return (buf.getvalue(), f"SDXL-Turbo ({IMAGE_MODEL})", f"on this PC ({why}, {time.time() - t:.0f} s)",
+            {"size": f"{w}x{h}", "seed": seed, "steps": 4})
 
 
 # ---- music ------------------------------------------------------------------------------------
@@ -196,7 +209,6 @@ def music_prompt(s: Settings, idea: str) -> tuple[str, str]:
 
 
 def make_music(s: Settings, idea: str, seconds: int = 15, improve: bool = True, emit=lambda m: None) -> Made:
-    import numpy as np
     import soundfile as sf
     notes: list[str] = []
     prompt = idea
@@ -207,26 +219,34 @@ def make_music(s: Settings, idea: str, seconds: int = 15, improve: bool = True, 
     notes.append("no online music AI is available, so it was made on this PC")
     seconds = max(3, min(int(seconds), 30))
     out = folder(s, "music") / f"{_stamp()}-{_slug(idea)}.wav"
+    t = time.time()
+    wave, rate, device = compose(prompt, seconds, notes, emit)
+    sf.write(out, wave, rate)
+    made = Made(out, "music", idea, f"MusicGen small ({MUSIC_MODEL}, Meta)",
+                f"on this PC ({device}, {time.time() - t:.0f} s)", notes,
+                {"description": prompt, "seconds": seconds, "sample_rate": rate})
+    made.save_record()
+    return made
+
+
+def compose(prompt: str, seconds: int, notes: list[str] | None = None, emit=lambda m: None):
+    """MusicGen on this PC: (wave as float32 numpy, sample rate, "GPU"/"CPU"). At most 30 seconds."""
+    import numpy as np
+    notes = notes if notes is not None else []
+    seconds = max(3, min(int(seconds), 30))
     with _lock:
         unloaded = free_gpu()
         if unloaded:
             notes.append(f"unloaded {', '.join(unloaded)} from the graphics card to make room")
         emit("Loading MusicGen (the first time downloads ~2 GB)…" if "music" not in _pipes else "Composing…")
         proc, model = _music()
-        emit(f"Composing {seconds} seconds…")
-        t = time.time()
+        emit(f"Composing {seconds} seconds of music…")
         inputs = proc(text=[prompt], padding=True, return_tensors="pt").to(model.device)
         audio = model.generate(**inputs, do_sample=True, guidance_scale=3.0, max_new_tokens=int(seconds * 50))
         rate = model.config.audio_encoder.sampling_rate
         wave = audio[0, 0].float().cpu().numpy()
         wave = wave / max(1e-6, float(np.abs(wave).max())) * 0.9
-        sf.write(out, wave, rate)
-    device = "GPU" if str(model.device).startswith("cuda") else "CPU"
-    made = Made(out, "music", idea, f"MusicGen small ({MUSIC_MODEL}, Meta)",
-                f"on this PC ({device}, {time.time() - t:.0f} s)", notes,
-                {"description": prompt, "seconds": seconds, "sample_rate": rate})
-    made.save_record()
-    return made
+    return wave.astype("float32"), rate, "GPU" if str(model.device).startswith("cuda") else "CPU"
 
 
 # ---- stories ----------------------------------------------------------------------------------
@@ -321,4 +341,44 @@ def write_story(idea: str, language: str = "English") -> str:
     return _done(m) + f"\n\nThe story:\n{text[:3000]}"
 
 
-TOOLS = {f.__name__: f for f in (create_image, create_music, write_story)}
+def _in_background(kind: str, work) -> None:
+    """Movies and songs take minutes: run them apart from the voice turn, open the result when done."""
+    def run():
+        try:
+            _done(work())
+        except Exception:  # noqa: BLE001 - nobody waits for this thread: log it (stderr = workbench.log)
+            import traceback
+            print(f"[{datetime.now():%H:%M:%S}] making a {kind} failed:", flush=True)
+            traceback.print_exc()
+    threading.Thread(target=run, name=f"create-{kind}", daemon=True).start()
+
+
+def make_movie(idea: str, language: str = "English") -> str:
+    """Start making a short narrated movie (painted scenes, a narrator's voice, music) from an idea.
+    It takes a few minutes and opens by itself when it is ready; tell the user that.
+
+    Args:
+        idea: what the movie is about, e.g. "a lighthouse keeper who befriends a whale"
+        language: language of the narration, "English" or "Swedish"
+    """
+    import wb_movie
+    lang = "Swedish" if language.lower().startswith(("sv", "swe")) else "English"
+    _in_background("movie", lambda: wb_movie.make_movie(_settings or Settings.load(), idea, language=lang))
+    return "Started the movie. It takes a few minutes and opens by itself when it's ready (also in Create → Movie)."
+
+
+def make_song(idea: str, language: str = "English") -> str:
+    """Start making a song with singing: lyrics are written, then it is sung and played by ACE-Step on
+    this PC. It takes a minute or two and plays by itself when it is ready; tell the user that.
+
+    Args:
+        idea: what the song is about and its style, e.g. "a happy summer pop song about the archipelago"
+        language: language of the lyrics, "English" or "Swedish"
+    """
+    import wb_song
+    lang = "Swedish" if language.lower().startswith(("sv", "swe")) else "English"
+    _in_background("song", lambda: wb_song.make_song(_settings or Settings.load(), idea, language=lang))
+    return "Started the song. It plays by itself when it's ready (also in Create → Song)."
+
+
+TOOLS = {f.__name__: f for f in (create_image, create_music, write_story, make_movie, make_song)}

@@ -34,6 +34,12 @@ An agent (`qwen3:8b` with tool calling) searches the web, reads the pages it cho
 
 ![The Research tab: the agent's steps, the check and the finished report with sources](docs/screenshots/4-research.png)
 
+### Create: pictures, music, songs, stories and movies
+
+Describe an idea in English or Swedish and the workbench makes it on this PC: pictures with SDXL-Turbo, short tunes with MusicGen, stories by the writing model, and **songs with singing**: the writing model writes rhyming lyrics with verses and a chorus (or I paste my own), and [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) sings and plays a 1â€“3 minute song, about 30 seconds per minute of song. **Movies** are narrated short films: the writing model writes a screenplay, every scene is painted in the same style with the same characters, a Piper voice narrates it, MusicGen scores it, and ffmpeg puts it together with slow camera moves, crossfades, a title and subtitles. Every creation is saved with a record of which model made it and where. The voice assistant can do all of it too: "make a movie about a lighthouse keeper and a whale".
+
+![Four frames from a movie the workbench made from one sentence: title card, subtitles and the same keeper in every scene](docs/screenshots/9-movie.jpg)
+
 ### TV: wake it, pick a channel, use a remote
 
 Finds a Samsung TV on the network, turns it on with Wake-on-LAN, opens apps and favourite channels in one click, and has a full remote. The voice assistant uses the same code, so "turn on the news" works too.
@@ -48,7 +54,7 @@ The assistant's tools come in three levels. **Free:** open the programs on the l
 
 ### Evaluation: tests that keep it honest
 
-[promptfoo](https://www.promptfoo.dev) test suites run against the real project code with my models: one for the document assistant (does it cite, does it refuse when the answer isn't there) and one for the invoices. The first run of the document suite found three bugs (80 % → 100 %).
+[promptfoo](https://www.promptfoo.dev) test suites run against the real project code with my models: one for the document assistant (does it cite, does it refuse when the answer isn't there) and one for the invoices. The first run of the document suite found three bugs (80 % â†’ 100 %).
 
 ![The Evaluation tab: the invoices suite, 5 of 5 passed](docs/screenshots/7-evaluation.png)
 
@@ -66,14 +72,14 @@ Each one also runs on its own, with its own README.
 |---|---|---|
 | 01 | [RAG document assistant](01-rag/) | Answers from your own PDFs and notes, with citations; says so when the answer isn't there |
 | 02 | [AI voice agent](02-voice/) | Spoken conversation in English or Swedish, with tools |
-| 03 | [Invoice automation](03-invoices/) | Invoice PDFs and photos → checked CSV rows; wrong totals go to review |
+| 03 | [Invoice automation](03-invoices/) | Invoice PDFs and photos â†’ checked CSV rows; wrong totals go to review |
 | 04 | [Research agent](04-research/) | Searches, reads pages and writes a cited report, plus a check for made-up facts |
-| 05 | [AI evaluation platform](05-eval/) | promptfoo tests for 01 and 03; its first run found 3 bugs in 01 (80 % → 100 %) |
+| 05 | [AI evaluation platform](05-eval/) | promptfoo tests for 01 and 03; its first run found 3 bugs in 01 (80 % â†’ 100 %) |
 | app | [AI Workbench](app/) | The Windows program that uses all five (how it's built: [app/README.md](app/README.md)) |
 
 ## Built with
 
-Python 3.12 · PySide6 (Qt 6) · Ollama (`gemma3:12b`, `qwen3:8b`, `nomic-embed-text`) · ChromaDB · faster-whisper · Piper · promptfoo · uv
+Python 3.12 Â· PySide6 (Qt 6) Â· Ollama (`gemma3:12b`, `qwen3:8b`, `nomic-embed-text`) Â· ChromaDB Â· faster-whisper Â· Piper Â· PyTorch + diffusers (SDXL-Turbo, MusicGen) Â· ACE-Step 1.5 Â· ffmpeg Â· promptfoo Â· uv
 
 Nothing personal is in the code: TV, programs, servers and integrations are filled in from the program's own settings, and tokens are read from environment variables, never stored. All test data in the repository is made up.
 
@@ -89,6 +95,8 @@ ollama pull nomic-embed-text
 ollama pull qwen3:8b
 npm install -g promptfoo
 ```
+
+For the Create tab, install `requirements-create.txt` as described at the top of that file (PyTorch with CUDA), and for songs run `install-song-maker.ps1` once (ACE-Step in its own environment, about 13 GB).
 
 Run the program with `.venv\Scripts\pythonw.exe app\main.py`, or make a Start menu shortcut with `app\install-shortcut.ps1`.
 

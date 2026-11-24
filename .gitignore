@@ -17,3 +17,6 @@ db/
 
 # Image and music models (Create tab), downloaded on first use
 .hf/
+
+# Song maker (ACE-Step 1.5, its own clone, environment and models)
+ace-step/
