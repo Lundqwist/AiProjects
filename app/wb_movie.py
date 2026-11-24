@@ -109,7 +109,10 @@ def screenplay(s: Settings, idea: str, scenes: int, style: str, language: str, o
             for sc in play["scenes"]:  # 'Title card: "Wounded"' -> 'Wounded'
                 sc["narration"] = re.sub(r"^\s*(title card|intertitle|card)\s*:\s*", "", str(sc.get("narration", "")),
                                          flags=re.I).strip().strip("'\"“”‘’")
-            play["silent"] = bool(play.get("silent")) or bool(SILENT_WORDS.search(idea))
+            # silent only when the request asks: the writer once chose it by itself for a paper boat story
+            asked = [str(w.get("wish", "")) for w in play.get("wishes", []) if isinstance(w, dict)]
+            play["silent"] = bool(SILENT_WORDS.search(idea)) or (
+                bool(play.get("silent")) and any(re.search(r"silent|narrat|voice|talk", w, re.I) for w in asked))
             play.setdefault("title", idea[:60])
             play.setdefault("look", style)
             play.setdefault("setting", "")
@@ -398,11 +401,97 @@ def _srt(starts, narr_lens, texts) -> str:
     return "\n".join(blocks)
 
 
+# ---- the screenplay as editable text ------------------------------------------------------------
+
+def write_screenplay(s: Settings, idea: str, length: str = "Short (4 scenes)", style: str = STYLES[0],
+                     language: str = "English", online: bool | None = None, emit=lambda m: None) -> dict:
+    """Only the screenplay, to check and edit before filming. Who wrote it is kept in _by/_where/_notes."""
+    emit("Writing the screenplay…")
+    play, writer = screenplay(s, idea, LENGTHS.get(length, 4), style, language, online)
+    play.update({"_by": writer.by, "_where": writer.where, "_notes": list(writer.notes)})
+    return play
+
+
+YES = {"yes", "y", "true", "ja", "on", "1"}
+FIELDS = {"who": "Who", "picture": "Picture", "motion": "Motion", "narration": "Narration"}
+
+
+def play_to_text(play: dict) -> str:
+    """The screenplay as plain text that is easy to read and change."""
+    lines = [f"Title: {play.get('title', '')}",
+             f"Silent: {'yes' if play.get('silent') else 'no'}",
+             f"Setting: {play.get('setting', '')}",
+             f"Look: {play.get('look', '')}",
+             f"Music: {play.get('music', '')}", ""]
+    for c in play.get("characters", []):
+        if isinstance(c, dict):
+            lines.append(f"Character: {c.get('name', '')} | {c.get('looks', '')}")
+    for i, sc in enumerate(play.get("scenes", []), 1):
+        lines += ["", f"Scene {i}"]
+        for key, label in FIELDS.items():
+            val = sc.get(key, "")
+            lines.append(f"{label}: {', '.join(map(str, val)) if isinstance(val, list) else val}")
+    return "\n".join(lines) + "\n"
+
+
+def text_to_play(text: str, base: dict | None = None) -> dict:
+    """Read the text back. Scenes can be changed, removed, added (a new "Scene" line) or moved; the
+    request's wishes and who wrote it come from `base`. Raises ValueError with what is wrong."""
+    play = {k: v for k, v in (base or {}).items() if k.startswith("_") or k == "wishes"}
+    play.update({"characters": [], "scenes": []})
+    scene = None
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if re.fullmatch(r"(scene|scen)\s*\d*\s*:?", line, re.I):
+            scene = {"who": [], "picture": "", "motion": "", "narration": ""}
+            play["scenes"].append(scene)
+            continue
+        key, sep, val = line.partition(":")
+        if not sep:
+            if scene is not None and scene.get("narration"):  # a narration over several lines
+                scene["narration"] += " " + line
+                continue
+            raise ValueError(f"line {n} needs a label such as 'Picture:' — “{line[:50]}”")
+        key, val = key.strip().lower(), val.strip()
+        if scene is None:
+            if key == "character":
+                name, _, looks = val.partition("|")
+                if not looks.strip():
+                    raise ValueError(f"line {n}: write a character as 'Character: Name | how they look'")
+                play["characters"].append({"name": name.strip(), "looks": looks.strip()})
+            elif key == "silent":
+                play["silent"] = val.lower() in YES
+            elif key in ("title", "setting", "look", "music"):
+                play[key] = val
+            else:
+                raise ValueError(f"line {n}: unknown label '{key.title()}' before the first scene")
+        else:
+            field = next((f for f, label in FIELDS.items() if label.lower() == key), None)
+            if not field:
+                raise ValueError(f"line {n}: a scene has Who, Picture, Motion and Narration, not '{key.title()}'")
+            scene[field] = [w.strip() for w in val.split(",") if w.strip()] if field == "who" else val
+    play["scenes"] = [sc for sc in play["scenes"] if sc["picture"]]
+    if not play["scenes"]:
+        raise ValueError("the screenplay needs at least one scene with a Picture line")
+    play.setdefault("title", "Untitled")
+    play.setdefault("silent", False)
+    for k in ("setting", "look", "music"):
+        play.setdefault(k, "")
+    return play
+
+
 # ---- the whole movie ----------------------------------------------------------------------------
 
 def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: str = STYLES[0],
                language: str = "English", subtitles: bool = True, music: bool = True, online: bool | None = None,
-               emit=lambda m: None, moving: bool = True) -> wb_create.Made:
+               emit=lambda m: None, moving: bool = True, play: dict | None = None,
+               narration: bool = True) -> wb_create.Made:
+    """The whole movie. With `play` (from write_screenplay, perhaps edited with text_to_play) the
+    screenplay is filmed as it is; without it one is written first. narration=False: no narrator voice
+    (the text is still shown if subtitles are on). A silent film (asked for in the request or "Silent:
+    yes" in the screenplay) has no voice either, and shows its title cards even with subtitles off."""
     import io
 
     import numpy as np
@@ -412,14 +501,18 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
     import wb_video
 
     t0 = time.time()
-    count = LENGTHS.get(length, 4)
     still_why = ""
     if moving:
         moving, why = wb_video.ready()
         still_why = "" if moving else f"still pictures with camera moves instead of moving scenes: {why}"
-    emit("Writing the screenplay…")
-    play, writer = screenplay(s, idea, count, style, language, online)
-    notes = [f"screenplay written by {writer.by} {writer.where}"] + list(writer.notes) + ([still_why] if still_why else [])
+    if play is None:
+        play = write_screenplay(s, idea, length, style, language, online, emit)
+    writer_by, writer_where = play.get("_by", "the writing expert"), play.get("_where", "on this PC")
+    notes = ([f"screenplay written by {writer_by} {writer_where}"
+              + (", then checked and edited by you" if play.get("_edited") else
+                 ", checked by you" if play.get("_checked") else "")]
+             + list(play.get("_notes", [])) + ([still_why] if still_why else []))
+    play = {k: v for k, v in play.items() if not k.startswith("_")}
     stem = f"{wb_create._stamp()}-{wb_create._slug(play['title'])}"
     out = wb_create.folder(s, "movie") / f"{stem}.mp4"
     work = out.with_name(stem + "-scenes")
@@ -437,12 +530,13 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
             pictures.append(Image.open(io.BytesIO(png)).convert("RGB"))
             shots.append(Shot(pictures[-1], i))
 
-        silent = play["silent"]
-        if silent:  # as asked: no narrator; the text is shown on screen long enough to read
+        voiced = narration and not play["silent"]
+        if not voiced:  # no narrator: each scene lasts long enough to read its text
             voice_name = ""
             speech = [np.zeros(0, dtype="float32") for _ in play["scenes"]]
             narr_lens = [max(2.5, len(str(sc.get("narration", "")).split()) * 0.4 + 1.0) for sc in play["scenes"]]
-            notes.append("silent film as asked: no narrator, the text is shown on screen")
+            notes.append("silent film as asked: no narrator, the text is shown on screen" if play["silent"] else
+                         "narration turned off: no narrator" + (", the text is shown as subtitles" if subtitles else ""))
         else:
             emit("Recording the narrator…")
             voice_name, voice = _voice(s, language)
@@ -500,20 +594,22 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
     render(shots, starts, durs, subs, _title_card(play["title"]), audio_path, out, emit)
 
     notes.insert(1, f"{len(shots)} scenes painted by {', '.join(sorted({f'{b} {w}' for b, w in painters}))}")
-    if not play["silent"]:
+    if voiced:
         notes.append(f"narrated by the Piper voice {voice_name} on this PC")
     wishes = [str(w.get("wish")) for w in play.get("wishes", []) if isinstance(w, dict) and w.get("wish")]
     if wishes:
         notes.append("what the screenplay took from your request: " + "; ".join(wishes))
     notes.append(f"put together with ffmpeg on this PC: {total:.0f} s, {W}x{H}, {FPS} fps")
-    makers = ([writer.by] + sorted({b.split(" (")[0] for b, _ in painters}) + (["LTX-Video"] if moving else [])
-              + ([] if play["silent"] else ["Piper"]) + (["MusicGen"] if music else []))
-    local = writer.where == "on this PC" and all(w.startswith("on this PC") for _, w in painters)
+    makers = ([writer_by] + sorted({b.split(" (")[0] for b, _ in painters}) + (["LTX-Video"] if moving else [])
+              + (["Piper"] if voiced else []) + (["MusicGen"] if music else []))
+    local = writer_where == "on this PC" and all(w.startswith("on this PC") for _, w in painters)
     made = wb_create.Made(out, "movie", idea, ", ".join(makers[:-1]) + " and " + makers[-1],
                           f"{'on this PC' if local else 'on this PC and online'} ({time.time() - t0:.0f} s in all)",
                           notes, {"title": play["title"], "style": style, "language": language,
                                   "seconds": round(total, 1), "scenes": play["scenes"], "look": play["look"],
-                                  "music": music_desc, "voice": voice_name or "none (silent film)",
+                                  "music": music_desc,
+                                  "voice": voice_name or ("none (silent film)" if play["silent"] else "none"),
+                                  "subtitles": subtitles or play["silent"],
                                   "folder": work.name, "moving": moving, "silent": play["silent"],
                                   "characters": play.get("characters", []), "setting": play.get("setting", ""),
                                   "wishes": play.get("wishes", [])})

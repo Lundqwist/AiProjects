@@ -202,6 +202,23 @@ class MusicPage(CreatorPage):
         self.player.stop()
 
 
+class _Toggle(QPushButton):
+    """An on/off button that says which it is ("Music: on")."""
+
+    def __init__(self, name: str, on: bool, tip: str = ""):
+        super().__init__()
+        self.name = name
+        self.setCheckable(True)
+        self.setToolTip(tip)
+        self.toggled.connect(self._label)
+        self.setChecked(on)
+        self._label(on)
+
+    def _label(self, on: bool):
+        self.setText(f"{self.name}: {'on' if on else 'off'}")
+        self.setStyleSheet("" if on else "color: #8a94a6;")
+
+
 class PlayerMixin:
     """Play / Stop buttons over a text panel, for songs and movies."""
 
@@ -301,23 +318,119 @@ class MoviePage(PlayerMixin, CreatorPage):
         self.language = QComboBox()
         self.language.addItems(["English", "Swedish"])
         self.language.setToolTip("Language of the narration and subtitles")
-        self.subs = QCheckBox("Subtitles")
-        self.subs.setChecked(True)
-        self.music = QCheckBox("Music")
-        self.music.setChecked(True)
-        import wb_video
-        has_video, why = wb_video.installed()
-        self.moving = QCheckBox("Moving scenes")
-        self.moving.setChecked(has_video)
-        self.moving.setEnabled(has_video)
-        self.moving.setToolTip("LTX-Video animates each painted scene: real motion, about a minute per scene. "
-                               "Off: the pictures get slow camera moves instead (fast)." if has_video else why)
         self.online = QCheckBox("May use online AI")
         self.online.setToolTip("Screenplay and pictures online while tokens last; otherwise all made here")
-        for w in (self.length, self.look, self.language, self.subs, self.music, self.moving, self.online):
+        for w in (self.length, self.look, self.language, self.online):
             self.options.addWidget(w)
         self.options.addStretch()
+
+        # on/off switches in a row of their own
+        import wb_video
+        has_video, why = wb_video.installed()
+        self.narration = _Toggle("Narration", True, "A narrator reads the story aloud. Off: no voice (a silent "
+                                 "film asked for in the request has none either)")
+        self.subs = _Toggle("Subtitles", True, "The narration as text at the bottom of the picture "
+                            "(a silent film always shows its title cards)")
+        self.music = _Toggle("Music", True, "Background music by MusicGen under the whole film")
+        self.moving = _Toggle("Moving scenes", has_video,
+                              "LTX-Video animates each painted scene: real motion, about a minute per scene. "
+                              "Off: the pictures get slow camera moves instead (fast)." if has_video else why)
+        self.moving.setEnabled(has_video)
+        self.review = _Toggle("Check the screenplay first", True,
+                              "Write the screenplay, let you read and change it, and film it when you say so")
+        self.review.toggled.connect(lambda on: self.go.setText("Write screenplay" if on else "Create"))
+        self.go.setText("Write screenplay")
+        toggles = QHBoxLayout()
+        for w in (self.narration, self.subs, self.music, self.moving, self.review):
+            toggles.addWidget(w)
+        toggles.addStretch()
+        self.layout().insertLayout(2, toggles)
+
+        # the screenplay to check and change before filming
+        self.play_box = QWidget()
+        pv = QVBoxLayout(self.play_box)
+        pv.setContentsMargins(0, 0, 0, 0)
+        self.play_note = QLabel("")
+        self.play_note.setWordWrap(True)
+        self.play_text = QPlainTextEdit()
+        self.play_text.setMinimumHeight(260)
+        film = QPushButton("🎬 Film it")
+        film.setObjectName("primary")
+        film.clicked.connect(self.film)
+        again = QPushButton("Write again")
+        again.clicked.connect(self.create)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self._close_play)
+        row = QHBoxLayout()
+        for b in (film, again, cancel):
+            row.addWidget(b)
+        row.addStretch()
+        pv.addWidget(self.play_note)
+        pv.addWidget(self.play_text, 1)
+        pv.addLayout(row)
+        self.play_box.hide()
+        self.layout().insertWidget(4, self.play_box, 2)
+        self._play: dict | None = None      # as written, to compare with the edited text
+        self._film_play: dict | None = None  # what work() films next
         self.refresh()
+
+    NOTE = ("<b>The screenplay.</b> Change anything you like, then <b>Film it</b>: the title, <i>Silent: yes</i> "
+            "for a silent film, the setting and look, the characters (<i>Character: Name | how they look</i>; "
+            "the looks go into every picture), and per scene <i>Who</i>, <i>Picture</i> (what is painted), "
+            "<i>Motion</i> (what moves) and <i>Narration</i>. Remove a scene by deleting its lines, add one with "
+            "a new <i>Scene</i> line. What the writer took from your request: {wishes}")
+
+    def create(self):
+        if not self.review.isChecked():
+            self._film_play = None
+            return super().create()
+        idea = self.idea.toPlainText().strip()
+        if not idea or self.busy:
+            return
+        import wb_movie
+        self.busy = True
+        self.go.setEnabled(False)
+        self.state.setText("Writing the screenplay…")
+
+        def written(play):
+            self._play = play
+            wishes = "; ".join(str(w.get("wish")) for w in play.get("wishes", []) if isinstance(w, dict)) or "—"
+            self.play_note.setText(self.NOTE.format(wishes=wishes))
+            self.play_text.setPlainText(wb_movie.play_to_text(play))
+            self.play_box.show()
+            self.state.setText(f"Screenplay written by {play.get('_by', 'the writing expert')}: check it, then Film it")
+
+        def finished():
+            self.busy = False
+            self.go.setEnabled(True)
+
+        run_in_background(lambda i, emit: wb_movie.write_screenplay(
+            self.s, i, self.length.currentText(), self.look.currentText(), self.language.currentText(),
+            online=True if self.online.isChecked() else None, emit=emit),
+            idea, on_progress=self.state.setText, on_result=written,
+            on_error=lambda e: self.state.setText(f"<span style='color:#ff8a80'>Error: {e}</span>"),
+            on_done=finished)
+
+    def film(self):
+        import wb_movie
+        if self.busy or self._play is None:
+            return
+        text = self.play_text.toPlainText()
+        try:
+            play = wb_movie.text_to_play(text, self._play)
+        except ValueError as e:
+            self.state.setText(f"<span style='color:#ff8a80'>The screenplay: {e}</span>")
+            return
+        play["_checked"] = True
+        play["_edited"] = text.strip() != wb_movie.play_to_text(self._play).strip()
+        self._film_play = play
+        self._close_play()
+        super().create()  # films it: work() picks up _film_play
+
+    def _close_play(self):
+        self.play_box.hide()
+        if not self.busy:
+            self.state.setText("")
 
     def make_view(self):
         return self._player(video=True)
@@ -333,10 +446,11 @@ class MoviePage(PlayerMixin, CreatorPage):
 
     def work(self, idea, emit):
         import wb_movie
+        play, self._film_play = self._film_play, None
         return wb_movie.make_movie(self.s, idea, self.length.currentText(), self.look.currentText(),
                                    self.language.currentText(), self.subs.isChecked(), self.music.isChecked(),
                                    online=True if self.online.isChecked() else None, emit=emit,
-                                   moving=self.moving.isChecked())
+                                   moving=self.moving.isChecked(), play=play, narration=self.narration.isChecked())
 
 
 class StoryPage(CreatorPage):

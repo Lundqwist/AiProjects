@@ -6,6 +6,7 @@ Needs Ollama with the default models. Uses its own settings file, so your settin
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -176,10 +177,24 @@ for page, idea in jobs:
         page.length.setCurrentIndex(0)
     page.idea.setPlainText(idea)
     page.create()
+    if page is ct.movie:  # the screenplay is shown first; change it, then film it without a narrator
+        wait(lambda: not page.busy, 600)
+        text = page.play_text.toPlainText()
+        record("create: movie screenplay shown to check first",
+               not page.play_box.isHidden() and "Scene 1" in text and "Picture:" in text, text[:80].replace("\n", " | "))
+        page.play_text.setPlainText(re.sub(r"(?m)^Title: .*$", "Title: The Paper Boat Test", text))
+        page.narration.setChecked(False)
+        page.film()
     ok = wait(lambda: not page.busy, 1800 if page is ct.movie else 600)  # moving scenes take 1-2 min each
     made = page.gallery.count() == 1 and page.path is not None and page.path.exists()
     record(f"create: {page.kind} made, listed and credited", ok and made and "Made by" in page.credit.text(),
            page.credit.text().split("<br>")[0][:120] or page.state.text()[:120])
+    if page is ct.movie and made:
+        rec = wb_create.load_record(page.path)
+        d = rec.details if rec else {}
+        record("create: movie filmed from the edited screenplay, without a narrator",
+               d.get("title") == "The Paper Boat Test" and str(d.get("voice", "")).startswith("none")
+               and "edited by you" in " ".join(rec.notes), f"{d.get('title')} · voice {d.get('voice')}")
     if page is ct.movie and made and ct.movie.moving.isChecked():
         rec = wb_create.load_record(page.path)
         clips = list(page.path.with_name(rec.details["folder"]).glob("scene-*.mp4")) if rec else []
