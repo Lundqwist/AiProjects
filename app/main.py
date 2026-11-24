@@ -44,6 +44,8 @@ from tab_research import ResearchTab  # noqa: E402
 from tab_settings import SettingsTab  # noqa: E402
 from tab_tv import TvTab  # noqa: E402
 from tab_access import AccessTab  # noqa: E402
+from tab_brain import BrainTab  # noqa: E402
+import wb_brain  # noqa: E402
 import sounddevice as sd  # noqa: E402
 import wb_access  # noqa: E402
 import wb_wake  # noqa: E402
@@ -73,6 +75,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         # the front page, as in StoryMaker: the Lundqwist emblem and a card per tool
         self.home = HomePage([
+            ("Brain", "What the assistant remembers: notes, a wiki and rules, on this PC"),
             ("Documents", "Chat with your own PDFs and notes, with sources"),
             ("Experts", "Code, reasoning and writing experts, online AI for big jobs"),
             ("Create", "Pictures, music and stories, saying who made them"),
@@ -87,6 +90,7 @@ class MainWindow(QMainWindow):
         ])
         self.home.open_tab.connect(self.open_tab)
         self.tabs.addTab(self.home, "Home")
+        self.brain = BrainTab(s, status)
         self.documents = DocumentsTab(s, status)
         self.experts = ExpertsTab(s, status)
         self.create = CreateTab(s, status)
@@ -103,7 +107,7 @@ class MainWindow(QMainWindow):
         self.access = AccessTab(s, status)
         self.settings_tab = SettingsTab(s)
         self.settings_tab.saved.connect(self.settings_saved)
-        for widget, name in ((self.documents, "Documents"), (self.experts, "Experts"), (self.create, "Create"),
+        for widget, name in ((self.brain, "Brain"), (self.documents, "Documents"), (self.experts, "Experts"), (self.create, "Create"),
                              (self.code, "Code"), (self.voice, "Voice"),
                              (self.invoices, "Invoices"), (self.research, "Research"),
                              (self.tv, "TV"), (self.access, "Access"), (self.evaluation, "Evaluation"),
@@ -120,12 +124,33 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
 
+        # the Brain tab shows what the voice assistant wrote down meanwhile
+        self.tabs.currentChanged.connect(lambda i: self.brain.refresh() if self.tabs.widget(i) is self.brain
+                                         and not self.brain.busy else None)
+        # once a day, corrections you repeated become rules (checked a while after start, then hourly)
+        self.learn_timer = QTimer(self, interval=3600_000, timeout=self.learn_rules)
+        self.learn_timer.start()
+        QTimer.singleShot(120_000, self.learn_rules)
+
         self.settings_tab.check_now.connect(lambda: self.check_updates(manual=True))
         self.check_ollama()
         self.ollama_timer = QTimer(self, interval=30000, timeout=self.check_ollama)
         self.ollama_timer.start()
         if s.check_updates_at_start and "--no-update-check" not in sys.argv:
             QTimer.singleShot(1500, self.check_updates)
+
+    def learn_rules(self):
+        if self.brain.busy or not wb_brain.learning_due():
+            return
+
+        def done(rules):
+            if rules:
+                self.statusBar().showMessage(f"Brain: learned {len(rules)} new rule(s) from your corrections "
+                                             "(see Brain → Rules)", 15000)
+            self.brain.refresh()
+
+        run_in_background(wb_brain.learn_rules, on_result=done,
+                          on_error=lambda e: print(f"brain: rule learning failed: {e}"))
 
     def open_tab(self, name: str):
         for i in range(self.tabs.count()):
@@ -163,6 +188,7 @@ class MainWindow(QMainWindow):
         self.documents.refresh_sources()
         self.invoices.refresh()
         self.research.load_history()
+        self.brain.refresh()
         self.statusBar().showMessage("Settings saved", 5000)
         self.check_ollama()
 

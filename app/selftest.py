@@ -62,6 +62,7 @@ def record(name, ok, detail=""):
 s = Settings()
 s.rag_db, s.invoice_inbox = str(TMP / "db"), str(TMP / "inbox")
 s.invoice_output, s.reports_dir = str(TMP / "output"), str(TMP / "reports")
+s.brain_dir = str(TMP / "Brain")  # never the real brain
 s.speak_replies = False
 s.ensure_folders()
 s.apply()
@@ -154,6 +155,37 @@ record("settings: online AI list saves with its monthly limit",
 import wb_ai  # noqa: E402
 record("online AI without a key is skipped and says why",
        "no key" in wb_ai.provider_state(saved[-1])[1], wb_ai.provider_state(saved[-1])[1])
+
+# Brain: a note is filed into the wiki with its source, a newer note outdates an old fact, search
+# finds it, repeated corrections become a rule
+import wb_brain  # noqa: E402
+from tab_brain import BrainTab  # noqa: E402
+
+wb_brain.configure(s)
+bt = BrainTab(s, status)
+bt.note.setText("My dog is called Pixel and she loves swimming in the lake.")
+bt.add()
+wait(lambda: not bt.busy, 300)
+
+
+def wiki_text():
+    return "\n".join(p.read_text(encoding="utf-8") for p in (wb_brain.root() / "wiki").glob("*.md"))
+
+
+record("brain: note filed into the wiki with its source",
+       "Pixel" in wiki_text() and "(source: [[" in wiki_text(), wiki_text().replace("\n", " | ")[:160])
+wb_brain.remember("Pixel doesn't like swimming any more: she has been scared of the lake since the storm.")
+record("brain: a newer note marks the old fact outdated, keeping both sources",
+       "~~" in wiki_text() and "outdated by [[" in wiki_text(), wiki_text().replace("\n", " | ")[:200])
+hits = wb_brain.search("What is the dog called?")
+record("brain: search finds it", any("Pixel" in h.text for h in hits), hits[0].label if hits else "no hits")
+for said in ("Don't read out web addresses.", "No, stop spelling out the link.", "Again: never read the web address aloud."):
+    wb_brain.note_correction(said, "You can find it at w w w dot example dot com slash jobs.")
+new = wb_brain.learn_rules()
+record("brain: repeated corrections become a rule", bool(new) and bool(wb_brain.rules()), str(new))
+bt.refresh()
+record("brain tab: lists rules, pages and notes", bt.tree.topLevelItemCount() == 5 and
+       bt.tree.topLevelItem(2).childCount() == 2, bt.stats.text()[:120])
 
 # Create: a picture, a tune, a sung song, a story and a movie, each with a record of who made it
 s.creations_dir, s.code_projects_dir = str(TMP / "Creations"), str(TMP / "Code projects")
@@ -283,6 +315,19 @@ shown = wait(lambda: vt.is_busy, 5)
 ok = wait(lambda: len(vt.turns) >= 6 and not vt.is_busy, 120)
 record("voice: busy bar shows steps and hides when done", shown and ok and "Thinking…" in steps,
        f"steps {list(dict.fromkeys(steps))}, state '{vt.state.text()}'")
+
+# Brain in the voice assistant: recalls what it was told, and remembers new things
+vt.run_turn(text="What is my dog called?")
+ok = wait(lambda: len(vt.turns) >= 8 and not vt.is_busy, 180)
+used = [n for n, _ in getattr(vt.bot, "last_steps", [])]
+record("voice: recalls from the brain", ok and "pixel" in vt.turns[-1][1].lower() and "recall" in used,
+       f"{vt.turns[-1][1][:80]} · tools {used}")
+vt.run_turn(text="Please remember that my sister Anna's birthday is on the third of March.")
+ok = wait(lambda: len(vt.turns) >= 10 and not vt.is_busy, 180)
+wait(lambda: not wb_brain.busy(), 300)
+used = [n for n, _ in getattr(vt.bot, "last_steps", [])]
+record("voice: remembers into the brain", ok and "remember" in used and "Anna" in wiki_text(),
+       f"tools {used}")
 
 # A stuck question: Stop waiting gives up on it, and the next question still gets an answer
 import threading  # noqa: E402

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlain
                                QTextBrowser, QVBoxLayout, QWidget)
 
 import wb_ai
+import wb_brain
 from wb_common import run_in_background
 from wb_settings import Settings
 
@@ -115,9 +116,34 @@ class ExpertsTab(QWidget):
         s = self.s
         big = True if self.big.isChecked() else None
 
+        last = next((t["a"] for t in reversed(self.turns[:-1]) if t["a"]), "")
+
         def work(emit):
-            return wb_ai.ask(s, history, expert=choice if choice in wb_ai.EXPERTS else None,
-                             online_first=choice == "online", big=big, on_text=emit)
+            notes = []
+            if s.brain_in_experts:
+                wb_brain.configure(s)
+                try:
+                    wb_brain.note_correction(q, last, "experts")
+                except OSError:
+                    pass
+                # Your notes stay on this PC: they are only used when a local expert answers
+                online = bool(wb_ai.online_ready(s)) and (
+                    s.online_mode != "off" if choice == "online" else wb_ai.wants_online(s, history, "chat", big)[0])
+                if online and not s.online_for_documents:
+                    notes.append("Your brain was not used: this question went online, and your notes stay on this PC")
+                else:
+                    hits = wb_brain.relevant(q, k=4)
+                    extra = wb_brain.context() + wb_brain.facts_block(hits)
+                    if extra:
+                        history[0]["content"] += "\n" + extra
+                        used = (["your rules"] if wb_brain.rules() else []) + \
+                            list(dict.fromkeys(h.label for h in hits))
+                        notes.append("Used from your brain: " + ", ".join(used))
+            a = wb_ai.ask(s, history, expert=choice if choice in wb_ai.EXPERTS else None,
+                          online_first=choice == "online", big=big, on_text=emit)
+            if a:
+                a.notes = notes + a.notes
+            return a
 
         def progress(piece):
             entry["a"] += piece

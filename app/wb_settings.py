@@ -67,6 +67,13 @@ class Settings:
     creations_dir: str = str(DATA / "Creations")          # Images, Music and Stories inside
     code_projects_dir: str = str(DATA / "Code projects")  # new projects made in the Code tab
     code_roots: list = field(default_factory=lambda: [str(DATA / "Code projects"), str(ROOT.parent)])  # voice may open these
+    brain_dir: str = str(DATA / "Brain")                  # long-term memory as Markdown (wb_brain.py)
+
+    # Brain
+    brain_in_voice: bool = True       # the voice assistant can remember and recall, and follows the rules
+    brain_in_experts: bool = True     # Experts answers use the rules and related notes (only when answered locally)
+    brain_learn_daily: bool = True    # turn repeated corrections into rules once a day
+    brain_last_learned: str = ""
 
     # Documents
     top_k: int = 5
@@ -160,7 +167,7 @@ class Settings:
 
     def ensure_folders(self) -> None:
         for d in (self.rag_db, self.invoice_inbox, self.invoice_output, self.reports_dir, self.creations_dir,
-                  self.code_projects_dir):
+                  self.code_projects_dir, self.brain_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
 
     def apply(self) -> None:

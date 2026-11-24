@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPro
 
 import voice
 import wb_access
+import wb_brain
 import wb_ai
 import wb_code
 import wb_create
@@ -78,6 +79,15 @@ def for_speech(text: str) -> str:
     return re.sub(r"[*#`_]+", "", text).strip()
 
 
+def _last_answer(history: list) -> str:
+    for m in reversed(history):
+        role = m.get("role") if isinstance(m, dict) else getattr(m, "role", "")
+        content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+        if role == "assistant" and content:
+            return content
+    return ""
+
+
 def stop_sound() -> None:
     "Stop any playing sound. sounddevice raises if the last sound's stream is already gone."
     try:
@@ -140,9 +150,13 @@ class VoiceTab(QWidget):
         stop.clicked.connect(stop_sound)
         new = QPushButton("New conversation")
         new.clicked.connect(self.new_conversation)
+        self.keep_btn = QPushButton("Save to brain")
+        self.keep_btn.setToolTip("Keep what's worth remembering from this conversation as a note in the Brain tab")
+        self.keep_btn.clicked.connect(self.save_to_brain)
         buttons = QHBoxLayout()
         buttons.addWidget(self.talk, 1)
         buttons.addWidget(stop)
+        buttons.addWidget(self.keep_btn)
         buttons.addWidget(new)
 
         # Wake word
@@ -335,8 +349,11 @@ class VoiceTab(QWidget):
         voice.TOOLS.update(wb_create.TOOLS)  # pictures, music, stories (saved, opened, with who made them)
         wb_code.configure(self.s)
         voice.TOOLS.update(wb_code.TOOLS)  # new code projects, open/explain projects in VS Code
+        wb_brain.configure(self.s)
+        voice.STEP_NAMES.update(wb_brain.STEP_NAMES)
         for tools, on in ((wb_tv_tools.TOOLS, bool(self.s.tv_ip)),
-                          (wb_spotify_tools.TOOLS, wb_spotify.connected())):
+                          (wb_spotify_tools.TOOLS, wb_spotify.connected()),
+                          (wb_brain.TOOLS, self.s.brain_in_voice)):  # remember and recall
             if on:
                 voice.TOOLS.update(tools)
             else:
@@ -354,6 +371,10 @@ class VoiceTab(QWidget):
                                        voices_dir=s.voices_dir, speed=s.speech_speed,
                                        volume=s.speech_volume, output_device=s.output_device,
                                        extra_system=EXTRA_SYSTEM)
+            self.bot.base_system = self.bot.history[0]["content"]
+        # The brain's rules can change between turns (edited, or learned): told afresh each turn
+        brain = ("\n" + wb_brain.VOICE_SYSTEM + wb_brain.context()) if self.s.brain_in_voice else ""
+        self.bot.history[0]["content"] = self.bot.base_system + brain
         return self.bot
 
     # ---- recording ----------------------------------------------------------------------
@@ -459,9 +480,27 @@ class VoiceTab(QWidget):
                 said = text
                 lang = known_lang or guess_language(said, "en")
             emit(("you", said, lang))
+            if self.s.brain_in_voice:  # "No, I meant…": kept for the daily rule learning
+                try:
+                    wb_brain.note_correction(said, _last_answer(bot.history), "voice")
+                except OSError:
+                    pass
             t1 = time.time()
             emit("Thinking…")
-            answer = bot.reply(said, lang)
+            asked, brain_steps = said, []
+            if self.s.brain_in_voice:
+                # The model rarely picks remember/recall among all its tools, so the brain is used every
+                # turn: related notes go into this turn's instructions, and "remember that…" is saved now
+                hits = wb_brain.relevant(said, k=4)
+                if hits:
+                    bot.history[0]["content"] += wb_brain.facts_block(hits)
+                    brain_steps.append(("recall", {"question": said}))
+                if wb_brain.wants_remembering(said):
+                    wb_brain.remember(said, "voice", background=True)
+                    brain_steps.append(("remember", {"fact": said}))
+                    asked = said + "\n\n(This was saved to the user's notes already. Just confirm it briefly.)"
+            answer = bot.reply(asked, lang)
+            bot.last_steps = brain_steps + bot.last_steps
             t2 = time.time()
             used = wb_ai.describe_steps(getattr(bot, "last_steps", []))
             source = f"answered by {bot.chat_model} on this PC" + (f" · {used}" if used else " from its own knowledge")
@@ -574,6 +613,21 @@ class VoiceTab(QWidget):
         self._stop_busy()
         self.state.setText(message)
         self._resume_wake()
+
+    def save_to_brain(self):
+        turns = [(who, text) for who, text, _ in self.turns]
+        if not turns:
+            return
+        self.keep_btn.setEnabled(False)
+        self.state.setText("Picking out what's worth remembering…")
+
+        def done(path):
+            self.state.setText(f"Saved to your brain: {path.stem}" if path else
+                               "Nothing in this conversation seemed worth remembering.")
+
+        run_in_background(lambda emit: wb_brain.save_conversation(turns), on_result=done,
+                          on_error=lambda e: self.state.setText(f"Could not save: {e}"),
+                          on_done=lambda: self.keep_btn.setEnabled(True))
 
     def new_conversation(self):
         stop_sound()
