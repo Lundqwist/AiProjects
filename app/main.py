@@ -27,7 +27,9 @@ if sys.stdout is None or sys.stderr is None:
 
 from PySide6.QtCore import QByteArray, QTimer  # noqa: E402
 from PySide6.QtGui import QIcon  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget  # noqa: E402
+
+from wb_home import HeaderBand, HomePage  # noqa: E402
 
 import ollama  # noqa: E402
 from tab_documents import DocumentsTab  # noqa: E402
@@ -64,6 +66,19 @@ class MainWindow(QMainWindow):
         status = lambda msg: self.statusBar().showMessage(str(msg), 8000)  # noqa: E731
 
         self.tabs = QTabWidget()
+        # the front page, as in StoryMaker: the Lundqwist emblem and a card per tool
+        self.home = HomePage([
+            ("Documents", "Chat with your own PDFs and notes, with sources"),
+            ("Voice", "Talk with the assistant: \"Hey Luna\", in English or Swedish"),
+            ("Invoices", "Invoice PDFs and photos into checked CSV rows"),
+            ("Research", "A cited report from the web, with a fact check"),
+            ("TV", "Wake the TV, favourite channels and a remote"),
+            ("Access", "What the assistant may do on this PC"),
+            ("Evaluation", "Run the test suites and see what failed"),
+            ("Settings", "Models, folders, sound devices and voices"),
+        ])
+        self.home.open_tab.connect(self.open_tab)
+        self.tabs.addTab(self.home, "Home")
         self.documents = DocumentsTab(s, status)
         self.voice = VoiceTab(s, status)
         self.invoices = InvoicesTab(s, status)
@@ -82,8 +97,16 @@ class MainWindow(QMainWindow):
                              (self.tv, "TV"), (self.access, "Access"), (self.evaluation, "Evaluation"),
                              (self.settings_tab, "Settings")):
             self.tabs.addTab(widget, name)
-        self.tabs.setCurrentIndex(min(s.last_tab, self.tabs.count() - 1))
-        self.setCentralWidget(self.tabs)
+        self.tabs.setCurrentIndex(0)  # always start on the front page
+        header = HeaderBand("Local AI with Ollama  ·  lundqwist.se")
+        header.home_clicked.connect(lambda: self.tabs.setCurrentIndex(0))
+        central = QWidget()
+        lay = QVBoxLayout(central)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(header)
+        lay.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
 
         self.settings_tab.check_now.connect(lambda: self.check_updates(manual=True))
         self.check_ollama()
@@ -91,6 +114,12 @@ class MainWindow(QMainWindow):
         self.ollama_timer.start()
         if s.check_updates_at_start and "--no-update-check" not in sys.argv:
             QTimer.singleShot(1500, self.check_updates)
+
+    def open_tab(self, name: str):
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == name:
+                self.tabs.setCurrentIndex(i)
+                return
 
     def check_updates(self, manual: bool = False):
         self.statusBar().showMessage("Checking for updates…")
@@ -156,8 +185,15 @@ class MainWindow(QMainWindow):
 def main() -> int:
     settings.ensure_folders()
     settings.apply()
+    try:  # its own taskbar button and icon, instead of pythonw's
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Lundqwist.AIWorkbench")
+    except (AttributeError, OSError):
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName("AI Workbench")
+    if (APP_DIR / "icon.ico").exists():
+        app.setWindowIcon(QIcon(str(APP_DIR / "icon.ico")))
     app.setStyleSheet(THEME)
     if "--screenshot" in sys.argv:
         sys.argv.append("--no-update-check")
