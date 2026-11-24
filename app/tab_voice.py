@@ -19,6 +19,22 @@ from wb_settings import SETTINGS_DIR, Settings
 RATE = 16000
 
 
+SWEDISH = {"jag", "är", "och", "vad", "hur", "det", "inte", "min", "mina", "har", "kan", "på", "ett", "du",
+            "som", "att", "med", "för", "den", "nu", "här", "till", "av", "om", "så", "huvudstaden", "tv:n"}
+ENGLISH = {"the", "is", "and", "you", "what", "how", "it", "not", "my", "have", "can", "on", "a", "to", "of",
+           "now", "here", "with", "for", "this", "that", "are", "has", "your", "currently"}
+
+
+def guess_language(text: str, default: str = "en") -> str:
+    """'sv' or 'en' from common words and å/ä/ö; default when it can't tell."""
+    words = set(text.lower().replace("?", " ").replace(",", " ").replace(".", " ").replace("!", " ").split())
+    sv = len(words & SWEDISH) + (2 if any(c in text.lower() for c in "åäö") else 0)
+    en = len(words & ENGLISH)
+    if sv == en:
+        return default
+    return "sv" if sv > en else "en"
+
+
 def stop_sound() -> None:
     "Stop any playing sound. sounddevice raises if the last sound's stream is already gone."
     try:
@@ -287,10 +303,7 @@ class VoiceTab(QWidget):
                     return None
             else:
                 said = text
-                words = set(said.lower().replace("?", " ").replace(",", " ").split())
-                swedish = {"jag", "är", "och", "vad", "hur", "det", "inte", "min", "mina", "har", "kan", "på", "en", "ett"}
-                guessed = "sv" if any(c in said.lower() for c in "åäö") or len(words & swedish) >= 2 else "en"
-                lang = known_lang or guessed
+                lang = known_lang or guess_language(said, "en")
             emit(("you", said, lang))
             t1 = time.time()
             emit("Thinking…")
@@ -299,7 +312,9 @@ class VoiceTab(QWidget):
             emit(("bot", answer, f"speech-to-text {t1 - t0:.1f}s · answer {t2 - t1:.1f}s"))
             if speak and answer:
                 emit("Speaking…")
-                bot.speak(answer, lang)
+                # Speak with the voice that fits the answer itself: a short English command can be
+                # mistaken for Swedish ("start TV and CNN" -> "StartTV och CNN")
+                bot.speak(answer, guess_language(answer, lang))
             return True
 
         def progress(item):
