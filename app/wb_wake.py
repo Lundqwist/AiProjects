@@ -106,6 +106,13 @@ class WakeListener:
                  log_path=None):
         self.wake_word = wake_word
         self.log_path = log_path
+        # Conversation mode: every phrase is a command, no wake word needed. Ends (on_idle) after
+        # idle_limit seconds with nothing said.
+        self.conversation = False
+        self.idle_limit = 60
+        self.on_idle = lambda: None
+        self._last_activity = time.time()
+        self._ignore_until = 0.0
         self._frames_seen = 0
         self._peak_since_log = 0.0
         self._last_heartbeat = time.time()
@@ -198,6 +205,14 @@ class WakeListener:
                 break
         self.paused = False
         self._reset_segment()
+        self._last_activity = time.time()
+        self._ignore_until = time.time() + 0.5  # the tail of our own voice in the room
+        self._set_mode("wake")
+
+    def set_conversation(self, on: bool) -> None:
+        self.conversation = on
+        self._last_activity = time.time()
+        self._reset_segment()
         self._set_mode("wake")
 
     # ---- audio --------------------------------------------------------------------------
@@ -215,7 +230,13 @@ class WakeListener:
             self.log(f"alive: {self._frames_seen} frames, loudest {self._peak_since_log:.4f}, "
                      f"noise {self.noise:.4f}, mode {self.mode}, paused {self.paused}")
             self._last_heartbeat, self._peak_since_log = time.time(), 0.0
-        if self.paused:
+        if self.paused or time.time() < self._ignore_until:
+            return
+        if (self.conversation and not self._in_speech
+                and time.time() - self._last_activity > self.idle_limit):
+            self.log(f"conversation ended: {self.idle_limit} s without speech")
+            self._last_activity = time.time()
+            self.on_idle()
             return
         if self.mode == "command" and not self._in_speech and time.time() > self._command_deadline:
             self.on_state("Didn't hear a command")
@@ -230,14 +251,16 @@ class WakeListener:
             return
         self._segment.append(f)
         self._silent_frames = 0 if speech else self._silent_frames + 1
-        needed_silence = 0.6 if self.mode == "wake" else 1.0  # seconds of quiet that end a phrase
-        max_len = 7 if self.mode == "wake" else 8              # seconds; keeps TV talk from piling up
+        talk = self.conversation or self.mode == "command"
+        needed_silence = 1.0 if talk else 0.6  # seconds of quiet that end a phrase
+        max_len = (15 if self.conversation else 8) if talk else 7  # keeps TV talk from piling up
         length = len(self._segment) * FRAME / RATE
         if self._silent_frames * FRAME / RATE >= needed_silence or length >= max_len:
             audio = np.concatenate(self._segment)
             cut = length >= max_len
             self._reset_segment()
-            if length >= 0.35:
+            if length >= (0.6 if self.conversation else 0.35):  # a cough isn't a question
+                self._last_activity = time.time()
                 try:
                     self._jobs.put_nowait((self.mode, audio, cut))
                 except queue.Full:
@@ -252,6 +275,8 @@ class WakeListener:
         if mode == "command":
             self._command_deadline = time.time() + 6
             self.on_state("Listening for your command…")
+        elif self.conversation:
+            self.on_state("Conversation: listening… just talk")
         else:
             self.on_state(f"Waiting for “{self.wake_word}”")
 
@@ -278,6 +303,11 @@ class WakeListener:
         self.log(f"speech burst: {len(audio) / RATE:.1f}s, peak {peak:.3f}, mode {mode}"
                  f"{', cut' if cut else ''}{', ignored (paused)' if self.paused else ''}")
         if self.paused:
+            return
+        if self.conversation:
+            self.log("conversation: a phrase (no wake word needed)")
+            self.pause()
+            self.on_command_audio(audio, "")
             return
         if mode == "command":
             self.log("command recorded after the wake word")

@@ -74,8 +74,10 @@ class Settings:
     speak_replies: bool = True
     push_to_talk: bool = True         # hold the button; off = click to start, click to stop
     wake_word: str = "Hey Luna"       # any word or phrase; two words trigger by mistake less often
-    wake_at_start: bool = False       # start listening for the wake word when the program opens
+    wake_at_start: bool = False       # (old; replaced by voice_mode)
     wake_chime: bool = True           # play a chime when the wake word is heard
+    voice_mode: str = "hold"          # wake (Hey Luna), conversation, hold (hold to talk); remembered
+    conversation_idle: int = 60       # conversation mode ends after this many seconds of silence
 
     # Integrations
     vikunja_url: str = "http://localhost:3456"
@@ -123,6 +125,8 @@ class Settings:
                     if s.voice_sv == "sv_SE-nst-medium":
                         s.voice_sv = "sv_SE-alma-medium"
                     s.settings_version = 2
+                if "voice_mode" not in data and data.get("wake_at_start"):
+                    s.voice_mode = "wake"  # "listen at start" became the remembered mode
             except (OSError, ValueError):
                 pass  # a broken file falls back to defaults; saving rewrites it
         return s

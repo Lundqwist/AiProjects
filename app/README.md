@@ -28,9 +28,21 @@ Programs come from the Start menu (`Get-StartApps`) and open the way a click the
 
 **Tested** (a fake "click" for each answer; launches, Vikunja writes, restarts and key presses recorded, not done): every forbidden program refused without asking, allowed programs open without asking, *Don't allow* / *Allow once* / *Always allow* each behave as named, status up/down, tasks and restarts only after a yes, a container not on the list refused. The model picked the right tool for "Open Spotify", "Is the NAS up?", "Add buy milk to my to-do list", "Starta om pihole", "Pause the music" and "Open PowerShell" (refused), and did nothing for "Delete everything in my Documents folder". The on-screen question was tested for a click from another thread, a timeout and a click that came too late.
 
+## Listening modes
+
+The mode button on the Voice tab (or F2) switches between three modes, and the program starts in the one used last:
+
+| Mode | How you talk |
+|---|---|
+| **Hey Luna** | say the wake word, then the question (below) |
+| **Conversation** | just talk: every sentence is a question, and follow-ups keep the context. It ends after 60 s of silence (*Conversation ends after* in Settings), or when you say "stop listening" / "sluta lyssna". Phrases Whisper "hears" in noise ("Thank you.", "Tack för att du tittade") are ignored, and listening resumes 0.5 s after the assistant stops talking, so it doesn't answer itself |
+| **Hold to talk** | nothing listens in the background; hold the big button |
+
+The big hold-to-talk button works in every mode. Conversation mode answers everything said near the microphone, including a talking TV, so use it when the room is quiet.
+
 ## Wake word
 
-Voice tab → *Listen for "Hey Luna"* (or Settings → *Listen for the wake word when the program starts*). Then just talk: "Hey Luna, put CNN on", or "Hey Luna" and, after the chime, the question. Pick your own word or phrase in Settings.
+Voice tab → mode *Hey Luna*. Then just talk: "Hey Luna, put CNN on", or "Hey Luna" and, after the chime, the question. Pick your own word or phrase in Settings.
 
 How `wb_wake.py` does it, all on this PC:
 

@@ -140,7 +140,7 @@ class SettingsTab(QWidget):
         self.push_to_talk = QCheckBox("Push to talk (hold the button); off = click to start and stop")
         self.wake_word = QLineEdit()
         self.wake_word.setPlaceholderText("e.g. Hey Luna")
-        self.wake_at_start = QCheckBox("Listen for the wake word when the program starts")
+        self.conversation_idle = QSpinBox(minimum=10, maximum=1800, singleStep=10, suffix=" s")
         self.wake_chime = QCheckBox("Play a chime when the wake word is heard")
 
         self.meter = QProgressBar(maximum=100, textVisible=False)
@@ -170,10 +170,12 @@ class SettingsTab(QWidget):
         f.addRow("", self.speak_replies)
         f.addRow("", self.push_to_talk)
         f.addRow("Wake word", self.wake_word)
-        f.addRow("", self.wake_at_start)
         f.addRow("", self.wake_chime)
+        f.addRow("Conversation ends after", self.conversation_idle)
         wake_hint = QLabel("Any word or phrase. Two words, or one that's rare in speech and on TV, "
-                           "trigger by mistake less often. Everything is heard and recognized on this PC only.")
+                           "trigger by mistake less often. Everything is heard and recognized on this PC only. "
+                           "Switch between Hey Luna, Conversation and Hold to talk with the mode button on "
+                           "the Voice tab; the program starts in the mode you used last.")
         wake_hint.setObjectName("muted")
         wake_hint.setWordWrap(True)
         f.addRow("", wake_hint)
@@ -299,7 +301,7 @@ class SettingsTab(QWidget):
         self.speak_replies.setChecked(s.speak_replies)
         self.push_to_talk.setChecked(s.push_to_talk)
         self.wake_word.setText(s.wake_word)
-        self.wake_at_start.setChecked(s.wake_at_start)
+        self.conversation_idle.setValue(s.conversation_idle)
         self.wake_chime.setChecked(s.wake_chime)
         self.top_k.setValue(s.top_k)
         self.temperature.setValue(s.temperature)
@@ -333,7 +335,7 @@ class SettingsTab(QWidget):
         s.speak_replies = self.speak_replies.isChecked()
         s.push_to_talk = self.push_to_talk.isChecked()
         s.wake_word = self.wake_word.text().strip() or "Hey Luna"
-        s.wake_at_start = self.wake_at_start.isChecked()
+        s.conversation_idle = self.conversation_idle.value()
         s.wake_chime = self.wake_chime.isChecked()
         s.top_k, s.temperature = self.top_k.value(), self.temperature.value()
         s.max_rounds, s.min_pages = self.max_rounds.value(), self.min_pages.value()

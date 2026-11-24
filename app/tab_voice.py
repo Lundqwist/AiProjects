@@ -7,6 +7,7 @@ import time
 import numpy as np
 import sounddevice as sd
 from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
                                QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
@@ -18,6 +19,17 @@ from wb_common import run_in_background
 from wb_settings import SETTINGS_DIR, Settings
 
 RATE = 16000
+
+MODES = {  # mode: (button label, what it does)
+    "wake": ("Hey Luna", "Listening for “{word}”. Say it, then your question, e.g. “{word}, open Spotify”."),
+    "conversation": ("Conversation", "Just talk: every sentence is a question, no wake word. Ends after "
+                                     "{idle} s of silence, or when you say “stop listening” / “sluta lyssna”."),
+    "hold": ("Hold to talk", "Not listening in the background. Hold the big button while you speak."),
+}
+END_PHRASES = ("stop listening", "end conversation", "end the conversation", "that's all", "that is all",
+               "sluta lyssna", "avsluta samtalet", "det var allt", "tack det var allt")
+PHANTOM_PHRASES = {"thank you", "thanks for watching", "thank you for watching", "you", "bye", "tack",
+                   "tack för att du tittade", "tack för att ni tittade", "textning", "musik", "music"}
 
 
 SWEDISH = {"jag", "är", "och", "vad", "hur", "det", "inte", "min", "mina", "har", "kan", "på", "ett", "du",
@@ -94,15 +106,26 @@ class VoiceTab(QWidget):
             lambda audio, quick_rest: self.run_turn(audio=audio, strip_wake=bool(quick_rest),
                                                     fallback=quick_rest))
         self.wake_signals.heard.connect(lambda t: self.heard_label.setText(f"Last heard: “{t[:120]}”"))
-        self.wake_btn = QPushButton()
-        self.wake_btn.setCheckable(True)
-        self.wake_btn.toggled.connect(self.set_wake)
+        self.wake_signals.idle.connect(self._conversation_idle)
+        self.mode = "hold"
+        self.mode_btn = QPushButton()
+        self.mode_btn.setMinimumHeight(40)
+        self.mode_btn.setMinimumWidth(260)
+        self.mode_btn.setToolTip("Click (or press F2) to switch: Hey Luna → Conversation → Hold to talk")
+        self.mode_btn.setStyleSheet("QPushButton { font-size: 11pt; font-weight: 600; border: 2px solid #d4af37; }")
+        self.mode_btn.clicked.connect(self.next_mode)
+        QShortcut(QKeySequence("F2"), self, activated=self.next_mode)
         self.wake_state = QLabel("")
+        self.mode_help = QLabel("")
+        self.mode_help.setObjectName("muted")
         self.heard_label = QLabel("")
         self.heard_label.setObjectName("muted")
         wake_row = QHBoxLayout()
-        wake_row.addWidget(self.wake_btn)
-        wake_row.addWidget(self.wake_state, 1)
+        wake_row.addWidget(self.mode_btn)
+        state_col = QVBoxLayout()
+        state_col.addWidget(self.wake_state)
+        state_col.addWidget(self.mode_help)
+        wake_row.addLayout(state_col, 1)
 
         self.view = QTextBrowser()
         self.typed = QLineEdit()
@@ -123,32 +146,67 @@ class VoiceTab(QWidget):
         self.timer = QTimer(self, interval=50, timeout=self._update_meter)
         self.apply_settings()
         self.render()
-        if self.s.wake_at_start:
-            QTimer.singleShot(2000, lambda: self.wake_btn.setChecked(True))
+        self._show_mode(self.s.voice_mode if self.s.voice_mode in MODES else "hold")
+        if self.s.voice_mode in ("wake", "conversation"):  # start in the mode used last
+            QTimer.singleShot(2000, lambda: self.set_mode(self.s.voice_mode))
 
     def _update_meter(self):
         # push-to-talk keeps a 0-1 level; the wake listener keeps the raw RMS
         level = self.level if self.stream else min(1.0, (self.wake.level if self.wake else 0) * 8)
         self.meter.setValue(int(level * 100))
 
-    # ---- wake word ----------------------------------------------------------------------
-    def set_wake(self, on: bool):
+    # ---- modes: Hey Luna / Conversation / Hold to talk ------------------------------------
+    def next_mode(self):
+        order = list(MODES)
+        self.set_mode(order[(order.index(self.mode) + 1) % len(order)])
+
+    def _show_mode(self, mode: str):
+        self.mode = mode
+        label, help_text = MODES[mode]
+        self.mode_btn.setText(f"Mode: {label}   ⟳")
+        self.mode_help.setText(help_text.format(word=self.s.wake_word, idle=self.s.conversation_idle))
+
+    def set_mode(self, mode: str):
+        """Switch how the assistant listens. The choice is remembered for the next start."""
+        self._show_mode(mode)
+        if self.s.voice_mode != mode:
+            self.s.voice_mode = mode
+            try:
+                self.s.save()
+            except OSError:
+                pass
+        if mode == "hold":
+            self._stop_listener()
+            self.wake_state.setText("<span style='color:#9fb0cc'>●</span> Not listening in the background")
+            return
+        if self.wake:  # already listening: just switch between wake word and conversation
+            self.wake.idle_limit = self.s.conversation_idle
+            if self.wake.paused:
+                self.wake.conversation = mode == "conversation"  # takes effect when the answer is done
+            else:
+                self.wake.set_conversation(mode == "conversation")
+            return
+        self._start_listener()
+
+    def _stop_listener(self):
         if self.wake:
             self.wake.stop()
             self.wake = None
-        if not on:
-            self.wake_state.setText("Off")
-            self.heard_label.setText("")
-            if not self.stream:
-                self.timer.stop()
-                self.meter.setValue(0)
-            return
+        self.heard_label.setText("")
+        if not self.stream:
+            self.timer.stop()
+            self.meter.setValue(0)
+
+    def _start_listener(self):
         sig = self.wake_signals
         listener = wb_wake.WakeListener(
             self.s.wake_word, on_state=sig.state.emit, on_wake=sig.wake.emit,
             on_command_audio=sig.command_audio.emit, on_heard=sig.heard.emit, device=self.s.input_device,
             log_path=SETTINGS_DIR / "wake.log")
-        self.wake_state.setText("Loading the wake-word model…")
+        listener.on_idle = sig.idle.emit
+        listener.idle_limit = self.s.conversation_idle
+        listener.conversation = self.mode == "conversation"
+        self.wake_state.setText("Starting to listen…")
         use_mic = self.wake_uses_microphone
 
         def start(emit):
@@ -156,19 +214,29 @@ class VoiceTab(QWidget):
             return listener
 
         def started(l):
-            if self.wake_btn.isChecked():
+            if self.mode in ("wake", "conversation") and self.wake is None:
                 self.wake = l
+                l.set_conversation(self.mode == "conversation")
                 self.timer.start()
             else:
-                l.stop()
+                l.stop()  # the mode changed while it was starting
 
         def failed(e):
-            self.wake_btn.setChecked(False)
+            self._show_mode("hold")
             self.wake_state.setText(f"<span style='color:#ff8a80'>Could not listen: {e}</span>")
 
         run_in_background(start, on_result=started, on_error=failed)
 
+    def _conversation_idle(self):
+        if self.mode == "conversation":
+            self.set_mode("wake")
+            self.wake_state.setText(f"<span style='color:#9fb0cc'>●</span> Conversation ended after "
+                                    f"{self.s.conversation_idle} s of silence. Say “{self.s.wake_word}” "
+                                    "to talk again.")
+
     def _wake_state(self, text: str):
+        if self.mode == "hold":
+            return
         colour = "#d4af37" if "command" in text else "#9be59b"
         self.wake_state.setText(f"<span style='color:{colour}'>●</span> {text}")
 
@@ -188,10 +256,13 @@ class VoiceTab(QWidget):
         ptt = self.s.push_to_talk
         self.talk.setCheckable(not ptt)
         self.talk.setText("Hold to talk" if ptt else "Click to talk")
-        self.wake_btn.setText(f"Listen for “{self.s.wake_word}”")
-        if self.wake and self.wake.wake_word != self.s.wake_word:  # a new word: restart with it
-            self.wake_btn.setChecked(False)
-            self.wake_btn.setChecked(True)
+        if hasattr(self, "mode_btn"):
+            self._show_mode(self.mode)
+        if self.wake and (self.wake.wake_word != self.s.wake_word or self.wake.device != self.s.input_device):
+            self._stop_listener()  # a new word or microphone: listen again with it
+            self._start_listener()
+        elif self.wake:
+            self.wake.idle_limit = self.s.conversation_idle
         tv = " Say \"turn on CNN\" or \"turn the volume down\" to run the TV." if self.s.tv_ip else ""
         self.hint.setText("Speak English or Swedish; the reply comes in the same language. "
                           f"Ask \"what's on my to-do list?\" to hear your Vikunja tasks.{tv} "
@@ -303,6 +374,14 @@ class VoiceTab(QWidget):
                     said = rest if found else (fallback or said)
                 if not said:
                     return None
+                if in_conversation:
+                    clean = said.lower().strip(" .!?,")
+                    if clean in PHANTOM_PHRASES:
+                        return None  # Whisper "hears" these in noise; not worth an answer
+                    if any(p in clean for p in END_PHRASES):
+                        emit(("you", said, lang))
+                        emit("end")
+                        return "ended"
             else:
                 said = text
                 lang = known_lang or guess_language(said, "en")
@@ -323,13 +402,25 @@ class VoiceTab(QWidget):
             if isinstance(item, tuple):
                 self.turns.append(item)
                 self.render()
+            elif item == "end":
+                self.set_mode("wake")
+                self.wake_state.setText(f"<span style='color:#9fb0cc'>●</span> Conversation ended. "
+                                        f"Say “{self.s.wake_word}” to talk again.")
             else:
                 self.state.setText(item)
 
         def done(result):
-            self.state.setText("Ready" if result else "Heard nothing. Check the microphone in Settings.")
+            if result == "ended":
+                self.state.setText("Conversation ended")
+            elif result:
+                self.state.setText("Ready")
+            elif in_conversation:
+                self.state.setText("Listening…")
+            else:
+                self.state.setText("Heard nothing. Check the microphone in Settings.")
 
         known_lang = lang
+        in_conversation = self.mode == "conversation" and audio is not None and not strip_wake
         run_in_background(work, on_progress=progress, on_result=done,
                           on_error=lambda e: self.state.setText(f"Error: {e}"),
                           on_done=self._resume_wake, pool=self.pool)
@@ -369,3 +460,4 @@ class _WakeSignals(QObject):
     wake = Signal()
     command_audio = Signal(object, str)
     heard = Signal(str)
+    idle = Signal()

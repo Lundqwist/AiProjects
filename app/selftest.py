@@ -143,7 +143,7 @@ import numpy as np  # noqa: E402
 
 s.wake_chime = False
 vt.wake_uses_microphone = False
-vt.wake_btn.setChecked(True)
+vt.set_mode("wake")
 wait(lambda: vt.wake is not None, 60)
 
 
@@ -175,7 +175,37 @@ before = len(vt.turns)
 feed(to16k(*vt.bot.synth("The weather tomorrow will be cloudy with some rain.", "en")))
 wait(lambda: False, 6)
 record("wake word: ignores speech without it", len(vt.turns) == before, vt.heard_label.text()[:80])
-vt.wake_btn.setChecked(False)
+
+# Conversation mode: no wake word, "stop listening" ends it, and so does silence
+vt.set_mode("conversation")
+wait(lambda: vt.wake.conversation and not vt.wake.paused, 10)
+before = len(vt.turns)
+feed(to16k(*vt.bot.synth("What is the capital of Sweden?", "en")))
+ok = wait(lambda: len(vt.turns) >= before + 2 and not vt.wake.paused, 120)
+new = vt.turns[before:]
+record("conversation: a question without the wake word is answered",
+       ok and "stockholm" in new[1][1].lower(), f"{[t[1] for t in new]}")
+before = len(vt.turns)
+feed(to16k(*vt.bot.synth("And what about Denmark?", "en")))
+ok = wait(lambda: len(vt.turns) >= before + 2 and not vt.wake.paused, 120)
+new = vt.turns[before:]
+record("conversation: a follow-up keeps the context", ok and "copenhagen" in new[1][1].lower(),
+       f"{[t[1] for t in new]}")
+feed(to16k(*vt.bot.synth("Stop listening.", "en")))
+ok = wait(lambda: vt.mode == "wake", 60)
+record("conversation: 'stop listening' switches back to Hey Luna", ok, vt.mode)
+vt.set_mode("conversation")
+vt.wake.idle_limit = 3
+wait(lambda: vt.wake.conversation, 5)
+quiet = np.zeros(480, "float32")
+for _ in range(int(5 / 0.03)):  # five seconds of silence through the microphone callback
+    vt.wake._callback(quiet.reshape(-1, 1), 480, None, None)
+    wait(lambda: False, 0.03)
+record("conversation: ends by itself after the silence limit", vt.mode == "wake", vt.mode)
+vt.next_mode()
+vt.next_mode()
+record("mode button cycles Hey Luna -> Conversation -> Hold to talk", vt.mode == "hold" and vt.wake is None,
+       vt.mode_btn.text())
 
 # 5. Research (uses the web)
 if "--skip-research" not in sys.argv:
