@@ -95,7 +95,7 @@ class Assistant:
     def __init__(self, chat_model: str = CHAT_MODEL, whisper_size: str = WHISPER_SIZE,
                  whisper_device: str = "auto", voices: dict[str, str] | None = None,
                  voices_dir: Path = HERE / "voices", speed: float = 1.0, volume: float = 1.0,
-                 output_device: int | None = None):
+                 output_device: int | None = None, extra_system: str = ""):
         t = time.time()
         self.chat_model = chat_model
         self.whisper_size = whisper_size
@@ -103,7 +103,7 @@ class Assistant:
         self.voices = {lang: PiperVoice.load(Path(voices_dir) / f"{name}.onnx")
                        for lang, name in (voices or VOICES).items()}
         self.speed, self.volume, self.output_device = speed, volume, output_device
-        self.history = [{"role": "system", "content": SYSTEM}]
+        self.history = [{"role": "system", "content": SYSTEM + ("\n" + extra_system if extra_system else "")}]
         print(f"Ready ({time.time() - t:.1f}s to load)")
 
     def reset(self) -> None:
@@ -127,9 +127,10 @@ class Assistant:
         # Name the language each turn: otherwise the model keeps the conversation's earlier language
         hint = {"sv": "\n\n(Svara på svenska.)", "en": "\n\n(Reply in English.)"}.get(lang or "", "")
         self.history.append({"role": "user", "content": text + hint})
-        for _ in range(3):  # allow a tool call or two before the spoken answer
+        for _ in range(6):  # room for search -> read a page or two -> CV before the spoken answer
+            # web pages and the CV are long: the default context would cut off the conversation
             msg = ollama.chat(model=self.chat_model, messages=self.history, tools=list(TOOLS.values()),
-                              think=False, options={"temperature": 0.5}).message
+                              think=False, options={"temperature": 0.5, "num_ctx": 16384}).message
             self.history.append(msg)
             if not msg.tool_calls:
                 return msg.content.strip()
@@ -140,7 +141,12 @@ class Assistant:
                 except Exception as e:
                     result = f"Tool error: {e}"
                 self.history.append({"role": "tool", "content": result, "tool_name": call.function.name})
-        return "Sorry, I got stuck."
+        # Out of rounds: answer from what the tools returned instead of giving up
+        self.history.append({"role": "user", "content": "Answer now from what you found, without more tools."})
+        msg = ollama.chat(model=self.chat_model, messages=self.history, think=False,
+                          options={"temperature": 0.5, "num_ctx": 16384}).message
+        self.history.append(msg)
+        return (msg.content or "").strip() or "Sorry, I got stuck."
 
     def synth(self, text: str, lang: str) -> tuple[np.ndarray, int]:
         """Text to int16 audio. speed > 1 talks faster (Piper's length_scale is its inverse)."""

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 import time
 
 import numpy as np
@@ -17,6 +18,7 @@ import wb_spotify
 import wb_spotify_tools
 import wb_tv_tools
 import wb_wake
+import wb_web_tools
 from wb_common import run_in_background
 from wb_settings import SETTINGS_DIR, Settings
 
@@ -30,6 +32,11 @@ MODES = {  # mode: (button label, what it does)
 }
 END_PHRASES = ("stop listening", "end conversation", "end the conversation", "that's all", "that is all",
                "sluta lyssna", "avsluta samtalet", "det var allt", "tack det var allt")
+EXTRA_SYSTEM = """You CAN search the web: use web_search, then read_page on the best results, for anything
+current (news, prices, job listings). You CAN read the user's CV with read_my_cv. For job hunting, read the CV
+first, then search for matching jobs and name the best two or three with company and why they fit.
+You cannot change the CV itself; to keep a job for later, offer to save it with add_task in the project
+"Remote job search" (title: job and company, with the link). Never claim you can't search the web."""
 PHANTOM_PHRASES = {"thank you", "thanks for watching", "thank you for watching", "you", "bye", "tack",
                    "tack för att du tittade", "tack för att ni tittade", "textning", "musik", "music"}
 
@@ -48,6 +55,13 @@ def guess_language(text: str, default: str = "en") -> str:
     if sv == en:
         return default
     return "sv" if sv > en else "en"
+
+
+def for_speech(text: str) -> str:
+    """Web answers come with Markdown and links: keep the link text, drop URLs and symbols."""
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\(?https?://\S+\)?", "", text)
+    return re.sub(r"[*#`_]+", "", text).strip()
 
 
 def stop_sound() -> None:
@@ -277,6 +291,7 @@ class VoiceTab(QWidget):
         wb_tv_tools.configure(self.s)
         wb_spotify_tools.configure(self.s)
         voice.TOOLS.update(wb_access.TOOLS)  # programs, status, tasks, containers, media (wb_access)
+        voice.TOOLS.update(wb_web_tools.TOOLS)  # web search, read a page, read the CV (read-only)
         for tools, on in ((wb_tv_tools.TOOLS, bool(self.s.tv_ip)),
                           (wb_spotify_tools.TOOLS, wb_spotify.connected())):
             if on:
@@ -294,7 +309,8 @@ class VoiceTab(QWidget):
                                        whisper_device=s.whisper_device,
                                        voices={"en": s.voice_en, "sv": s.voice_sv},
                                        voices_dir=s.voices_dir, speed=s.speech_speed,
-                                       volume=s.speech_volume, output_device=s.output_device)
+                                       volume=s.speech_volume, output_device=s.output_device,
+                                       extra_system=EXTRA_SYSTEM)
         return self.bot
 
     # ---- recording ----------------------------------------------------------------------
@@ -402,7 +418,7 @@ class VoiceTab(QWidget):
                 emit("Speaking…")
                 # Speak with the voice that fits the answer itself: a short English command can be
                 # mistaken for Swedish ("start TV and CNN" -> "StartTV och CNN")
-                bot.speak(answer, guess_language(answer, lang))
+                bot.speak(for_speech(answer), guess_language(answer, lang))
             return True
 
         def progress(item):
