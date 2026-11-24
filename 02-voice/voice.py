@@ -39,14 +39,16 @@ STEP_NAMES = {"web_search": "Searching the web…", "read_page": "Reading a web 
               "ask_expert": "Asking an expert…", "create_image": "Painting a picture…",
               "create_music": "Composing music…", "write_story": "Writing a story…",
               "make_song": "Starting a song…", "make_movie": "Starting a movie…",
-              "make_code_project": "Writing the program…", "open_in_vs_code": "Opening VS Code…",
+              "make_code_project": "Writing the files…", "change_code_project": "Changing the files…",
+              "open_in_vs_code": "Opening VS Code…",
               "explain_project": "Reading the code…"}
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:
 answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbols.
 Reply in the same language as the user.
 Only say you did something if a tool did it; if a tool says the user did not allow it, say so plainly.
-You cannot delete files, send messages, make payments or change system settings: say so if asked."""
+You cannot delete files, send messages, make payments or change system settings: say so if asked.
+Creating new files is not deleting: if a tool for making files or code is offered, use it."""
 
 
 class _NoSpan:

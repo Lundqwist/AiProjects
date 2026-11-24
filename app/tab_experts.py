@@ -1,19 +1,36 @@
 """Experts tab: ask anything; the workbench picks a local expert or an online AI and says who answered."""
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
-                               QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                               QPlainTextEdit, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
 import wb_ai
 import wb_brain
+import wb_code
 import wb_trace
 from wb_common import run_in_background
 from wb_settings import Settings
 
 SYSTEM = ("You are a helpful expert. Answer correctly and clearly; use Markdown, with code in fenced blocks. "
           "Say so when you are unsure or don't know, instead of guessing.")
+FILES_SYSTEM = """
+You CAN create files. When the user asks for a website, a program, a script or any files, write every file
+COMPLETE in exactly this form, one after another:
+
+=== FILE: project-name/relative/path.ext ===
+```language
+the whole file
+```
+
+Start every path with one short folder name for the project (e.g. cat-website/index.html,
+cat-website/style.css). Whole files only, never fragments or "...". Before the files, say in short what you
+made and how to open or run it. The workbench shows the files to the user, who saves them into their folder
+({folder}) with one click. Never say you can't create files."""
 
 
 class ExpertsTab(QWidget):
@@ -63,6 +80,25 @@ class ExpertsTab(QWidget):
         row.addWidget(self.question, 1)
         row.addLayout(buttons)
 
+        # Files the experts write are saved here (the same work folder as the Code tab and voice)
+        self.folder = QLineEdit(self.s.code_projects_dir)
+        self.folder.setToolTip("Websites, programs and other files the experts write are saved in this folder")
+        self.folder.editingFinished.connect(self._folder_changed)
+        browse = QPushButton("Folder…")
+        browse.clicked.connect(self.pick_folder)
+        self.save_btn = QPushButton("Save files")
+        self.save_btn.setObjectName("primary")
+        self.save_btn.clicked.connect(self.save_files)
+        self.files_label = QLabel()
+        self.files_label.setObjectName("muted")
+        self.files_label.setWordWrap(True)
+        files_row = QHBoxLayout()
+        files_row.addWidget(QLabel("Save files to"))
+        files_row.addWidget(self.folder, 1)
+        files_row.addWidget(browse)
+        files_row.addWidget(self.save_btn)
+        self.pending: list[wb_code.Change] = []   # files in the last answer, not saved yet
+
         self.online_label = QLabel()
         self.online_label.setObjectName("muted")
         self.online_label.setWordWrap(True)
@@ -73,12 +109,17 @@ class ExpertsTab(QWidget):
         lay.addWidget(intro)
         lay.addLayout(top)
         lay.addWidget(self.view, 1)
+        lay.addLayout(files_row)
+        lay.addWidget(self.files_label)
         lay.addLayout(row)
         lay.addWidget(self.online_label)
+        self.show_pending([])
         self.apply_settings()
         self.render()
 
     def apply_settings(self):
+        if hasattr(self, "folder") and self.folder.text().strip() != self.s.code_projects_dir:
+            self.folder.setText(self.s.code_projects_dir)   # changed in Settings
         mode = self.s.online_mode
         self.big.setEnabled(mode == "big")
         self.big.setChecked(mode == "always")
@@ -106,7 +147,7 @@ class ExpertsTab(QWidget):
         self.busy = True
         self.ask_btn.setEnabled(False)
         choice = self.who.currentData()
-        history = [{"role": "system", "content": SYSTEM}]
+        history = [{"role": "system", "content": SYSTEM + FILES_SYSTEM.format(folder=self.target())}]
         for t in self.turns:
             if t["a"]:
                 history += [{"role": "user", "content": t["q"]}, {"role": "assistant", "content": t["a"]}]
@@ -154,8 +195,14 @@ class ExpertsTab(QWidget):
             entry["a"] += piece
             self.render()
 
+        target = self.target()
+
         def done(a: wb_ai.Answer):
             entry["a"], entry["credit"] = a.text, a.credit()
+            explanation, changes = wb_code.parse(a.text, target)
+            if changes:
+                entry["shown"] = explanation   # the files are listed below the chat, not printed in it
+                self.show_pending(changes)
             self.status(f"Answered by {a.by}")
 
         def failed(msg):
@@ -173,7 +220,61 @@ class ExpertsTab(QWidget):
 
     def clear(self):
         self.turns.clear()
+        self.show_pending([])
         self.render()
+
+    # ---- files the experts write --------------------------------------------------------------
+    def target(self) -> Path:
+        return Path(self.folder.text().strip() or self.s.code_projects_dir)
+
+    def _folder_changed(self):
+        path = self.folder.text().strip()
+        if path and path != self.s.code_projects_dir:
+            self.s.code_projects_dir = path   # one work folder for Experts, the Code tab and voice
+            self.s.save()
+            wb_code.configure(self.s)
+        if self.pending:  # same answer, new place: see again what is new and what would be replaced
+            last = next((t["a"] for t in reversed(self.turns) if t.get("shown") is not None), "")
+            self.show_pending(wb_code.parse(last, self.target())[1])
+
+    def pick_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Folder for the files the experts write", str(self.target()))
+        if d:
+            self.folder.setText(str(Path(d)))
+            self._folder_changed()
+
+    def show_pending(self, changes: list):
+        self.pending = changes
+        self.save_btn.setEnabled(bool(changes))
+        if not changes:
+            self.save_btn.setText("Save files")
+            self.files_label.setText("Ask for a website, a program or any files, and they can be saved here "
+                                     "with one click.")
+            return
+        replaced = [c.path for c in changes if not c.is_new]
+        self.save_btn.setText(f"Save {len(changes)} file{'s' if len(changes) != 1 else ''}")
+        self.files_label.setText("Not saved yet: " + ", ".join(
+            f"{c.path}{' (replaces the old one)' if not c.is_new else ''}" for c in changes)
+            + (". Replaced files are copied to .workbench-history first." if replaced else "."))
+
+    def save_files(self):
+        if not self.pending:
+            return
+        folder = self.target()
+        try:
+            done = wb_code.apply(folder, self.pending)
+        except OSError as e:
+            QMessageBox.warning(self, "Save files", f"Couldn't save in {folder}: {e}")
+            return
+        tops = sorted({p.split("/")[0] for p in done})
+        opened = folder / tops[0] if len(tops) == 1 and (folder / tops[0]).is_dir() else folder
+        self.status(f"Saved {len(done)} file(s) in {opened}")
+        self.show_pending([])
+        self.files_label.setText(f"Saved {len(done)} file(s) in {opened}.")
+        try:
+            wb_code.open_in_vscode(opened)
+        except RuntimeError:
+            os.startfile(opened)  # noqa: S606 - the user's own folder
 
     def render(self):
         if not self.turns:
@@ -184,7 +285,7 @@ class ExpertsTab(QWidget):
         md = []
         for t in self.turns:
             md.append(f"**You:** {t['q']}\n")
-            md.append(t["a"] or ("*Thinking…*" if t["busy"] else ""))
+            md.append(t.get("shown") or t["a"] or ("*Thinking…*" if t["busy"] else ""))
             if t["credit"]:
                 md.append("\n> " + t["credit"].replace("\n", "  \n> "))
             md.append("\n\n---\n")

@@ -46,9 +46,12 @@ For code, maths or logic problems, or long writing (cover letters, translations)
 its answer in short. Always say where an answer came from: "According to <site>…", "The code expert says…",
 "From your CV…", or that it is from your own knowledge.
 You CAN make pictures (create_image), music (create_music), songs with singing (make_song), stories (write_story)
-and narrated movies (make_movie; songs and movies take minutes and open by themselves when ready), write a new program and
-open it in Visual Studio Code (make_code_project), open a project in VS Code (open_in_vs_code) and explain a
-project (explain_project). Each result says who made it: tell the user (e.g. "Painted on this PC by SDXL-Turbo")."""
+and narrated movies (make_movie; songs and movies take minutes and open by themselves when ready).
+You CAN create files and code: websites, programs, scripts, any project (make_code_project saves every file in the
+user's work folder and opens it in Visual Studio Code), change or add files in those projects later
+(change_code_project), open a project in VS Code (open_in_vs_code) and explain a project (explain_project).
+Never say you can't create files or websites: use make_code_project. Each result says who made it: tell the user
+(e.g. "Painted on this PC by SDXL-Turbo")."""
 STALL_SECONDS = 60   # one step taking longer than this turns the bar red
 TURN_LIMIT = 240     # a question still not done after this is given up by itself
 BAR_OK = "QProgressBar::chunk { background: #d4af37; }"

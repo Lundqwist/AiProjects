@@ -262,25 +262,79 @@ def open_in_vs_code(project: str) -> str:
     return f"Opened {p} in Visual Studio Code."
 
 
+def safe_name(name: str) -> str:
+    return re.sub(r"[^\w.-]+", "-", name).strip("-.") or "project"
+
+
+def _open_quietly(folder: Path) -> str:
+    """Open the folder in VS Code, or in Explorer when VS Code isn't installed."""
+    try:
+        open_in_vscode(folder)
+        return "opened it in Visual Studio Code"
+    except RuntimeError:
+        os.startfile(folder)  # noqa: S606 - our own folder
+        return "opened the folder (Visual Studio Code was not found)"
+
+
+def _in_projects(project: str) -> Path | None:
+    """A project folder directly inside the work folder: the only place voice may change files."""
+    s = _settings or Settings.load()
+    root = Path(s.code_projects_dir)
+    want = re.sub(r"[^a-z0-9]", "", project.lower())
+    if not root.is_dir() or not want:
+        return None
+    dirs = [d for d in root.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    exact = [d for d in dirs if re.sub(r"[^a-z0-9]", "", d.name.lower()) == want]
+    near = [d for d in dirs if want in re.sub(r"[^a-z0-9]", "", d.name.lower())]
+    return (exact or near or [None])[0]
+
+
 def make_code_project(description: str, name: str) -> str:
-    """Write a new small program with the code expert, save it as a new project and open it in
-    Visual Studio Code. Afterwards tell the user what was made and who wrote it.
+    """Create new files: a website, program, script or any other code project. The code expert writes
+    every file and they are saved in a new folder in the user's work folder, then opened in Visual
+    Studio Code. Afterwards tell the user what was made, where, and who wrote it.
 
     Args:
-        description: what the program should do, with every detail the user gave
-        name: a short folder name for the project, e.g. "photo-renamer"
+        description: what to make (e.g. "a one-page website about my cat with a photo gallery"), with every detail the user gave
+        name: a short folder name for the project, e.g. "cat-website"
     """
     s = _settings or Settings.load()
-    folder = Path(s.code_projects_dir) / re.sub(r"[^\w.-]+", "-", name).strip("-")
+    folder = Path(s.code_projects_dir) / safe_name(name)
     if folder.exists() and any(folder.iterdir()):
-        return f"A project called {folder.name} already exists; pick another name or change it in the Code tab."
+        return (f"A project called {folder.name} already exists in {s.code_projects_dir}; use change_code_project "
+                "to change it, or pick another name.")
     explanation, changes, a = new_project(s, folder, description)
     if not changes:
         return f"The expert gave no files. Its reply: {a.text[:500]}"
     apply(folder, changes)
-    open_in_vscode(folder)
-    return (f"Saved {len(changes)} files in {folder} and opened it in Visual Studio Code: "
+    opened = _open_quietly(folder)
+    return (f"Saved {len(changes)} files in {folder} and {opened}: "
             f"{', '.join(c.path for c in changes)}.\n{a.credit()}\n\nThe expert's notes: {explanation[:1500]}")
+
+
+def change_code_project(project: str, request: str) -> str:
+    """Change or add files in one of the projects in the user's work folder (made earlier with
+    make_code_project or the Code tab): fix a bug, add a page to a website, restyle it, and so on.
+    Changed files are backed up first; nothing is deleted.
+
+    Args:
+        project: the project's folder name, e.g. "cat-website"
+        request: what to change, with every detail the user gave
+    """
+    s = _settings or Settings.load()
+    folder = _in_projects(project)
+    if not folder:
+        return f"No project called {project} in {s.code_projects_dir}. Voice can only change projects there."
+    explanation, changes, a = change(s, folder, request)
+    if not changes:
+        return f"The expert proposed no file changes. Its reply: {a.text[:800]}"
+    apply(folder, changes)
+    new = [c.path for c in changes if c.is_new]
+    changed = [c.path for c in changes if not c.is_new]
+    return (f"In {folder}: " + "; ".join(x for x in (f"new {', '.join(new)}" if new else "",
+                                                       f"changed {', '.join(changed)}" if changed else "") if x)
+            + (" (old versions copied to .workbench-history)" if changed else "")
+            + f".\n{a.credit()}\n\nThe expert's notes: {explanation[:1500]}")
 
 
 def explain_project(project: str, question: str = "") -> str:
@@ -297,4 +351,4 @@ def explain_project(project: str, question: str = "") -> str:
     return f"{a.credit()}\n\n{a.text[:4000]}"
 
 
-TOOLS = {f.__name__: f for f in (open_in_vs_code, make_code_project, explain_project)}
+TOOLS = {f.__name__: f for f in (open_in_vs_code, make_code_project, change_code_project, explain_project)}

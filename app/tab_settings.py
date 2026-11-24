@@ -87,6 +87,13 @@ class SettingsTab(QWidget):
         self.load_values()
         self.refresh_models()
 
+    def showEvent(self, event):
+        # The Experts tab can change the work folder too: show its value unless it is being edited here
+        if self.code_projects_dir.edit.text() == self._shown_code_dir:
+            self.code_projects_dir.edit.setText(self.s.code_projects_dir)
+        self._shown_code_dir = self.s.code_projects_dir
+        super().showEvent(event)
+
     # ---- groups -------------------------------------------------------------------------
     def _ollama_group(self) -> QGroupBox:
         g = QGroupBox("Ollama and models")
@@ -235,7 +242,7 @@ class SettingsTab(QWidget):
         f.addRow("Invoice output", self.invoice_output)
         f.addRow("Research reports", self.reports_dir)
         f.addRow("Pictures, music, stories", self.creations_dir)
-        f.addRow("New code projects", self.code_projects_dir)
+        f.addRow("Work folder (files and code the AI creates)", self.code_projects_dir)
         f.addRow("Code folders voice may open", self.code_roots)
         f.addRow("Piper voices", self.voices_dir)
         return g
@@ -487,6 +494,7 @@ class SettingsTab(QWidget):
                               (self.voices_dir, s.voices_dir), (self.eval_dir, s.eval_dir),
                               (self.creations_dir, s.creations_dir), (self.code_projects_dir, s.code_projects_dir)):
             picker.edit.setText(value)
+        self._shown_code_dir = s.code_projects_dir
         self.speed.setValue(int(s.speech_speed * 100))
         self.volume.setValue(int(s.speech_volume * 100))
         self.speak_replies.setChecked(s.speak_replies)
@@ -527,6 +535,7 @@ class SettingsTab(QWidget):
         s.invoice_output, s.reports_dir = self.invoice_output.text(), self.reports_dir.text()
         s.voices_dir, s.eval_dir = self.voices_dir.text(), self.eval_dir.text()
         s.creations_dir, s.code_projects_dir = self.creations_dir.text(), self.code_projects_dir.text()
+        self._shown_code_dir = s.code_projects_dir
         s.code_roots = [r.strip() for r in self.code_roots.text().split(";") if r.strip()]
         s.input_device = self.input_device.currentData()
         s.output_device = self.output_device.currentData()

@@ -45,7 +45,9 @@ EXPERTS = {
         "sql", "regex", "powershell", "bash", "script", "function", "class", "method", "compile",
         "compiler", "exception", "stack trace", "traceback", "bug", "debug", "error", "api", "json",
         "html", "css", "react", "docker", "git", "linq", "async", "unit test", "refactor", "algorithm",
-        "variable", "loop", "kod", "programmera", "felmeddelande", "skript", "def ", "```", "();", "=>")),
+        "variable", "loop", "kod", "programmera", "felmeddelande", "skript", "def ", "```", "();", "=>",
+        "website", "web site", "web page", "webpage", "web app", "app that", "hemsida", "webbsida",
+        "webbplats", "create files", "skapa filer")),
     "reasoning": Expert("reasoning", "Reasoning expert", "reasoning_model",
                         "maths, logic, planning and step-by-step problems", (
         "calculate", "math", "maths", "equation", "solve", "prove", "proof", "logic", "puzzle",
@@ -526,7 +528,8 @@ def describe_steps(steps: list[tuple[str, dict]]) -> str:
     names = {"web_search": "searched the web", "read_page": "read", "read_my_cv": "read your CV",
              "ask_expert": "asked", "open_tasks": "read your Vikunja tasks", "create_image": "made a picture",
              "create_music": "made music", "write_story": "wrote a story", "make_song": "started a song",
-             "make_movie": "started a movie", "make_code_project": "wrote a program",
+             "make_movie": "started a movie", "make_code_project": "wrote the files",
+             "change_code_project": "changed the files",
              "open_in_vs_code": "opened VS Code", "explain_project": "read the code",
              "remember": "wrote it in your brain", "recall": "looked in your notes"}
     out = []
