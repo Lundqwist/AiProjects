@@ -159,6 +159,8 @@ powershell -ExecutionPolicy Bypass -File app\install-shortcut.ps1   # Start menu
 
 Then start **AI Workbench** from the Start menu, or run `.venv\Scripts\pythonw.exe app\main.py`.
 
+A small loading window shows at once, with what is loading and for how long. Usually the main window follows in about 4 seconds; the first start after a restart of the PC can take a few minutes, while Windows reads the AI libraries from disk. Only one copy runs: starting AI Workbench again brings the open window (or the loading window) to the front. Each start writes `Started in N s` to the log.
+
 ## Where things are stored
 
 | What | Where |
@@ -173,6 +175,7 @@ The Vikunja token is never saved: Settings stores the *name* of the environment 
 ## Design notes
 
 - **Settings → modules.** The project modules read module-level names (`rag.CHAT_MODEL`, `agent.MAX_ROUNDS`, …) at call time, so `Settings.apply()` just sets them. The CLI scripts keep working unchanged.
+- **Starting in two steps.** `main.py` imports only light parts, shows the loading window and claims a named local socket (one per Windows user and settings file, so a demo copy with its own settings may run beside it; a second copy finds the socket, asks the first to come forward and quits). The plain-Python projects (`rag`, `voice`, `agent`, `invoice`, chromadb above all) then load on a background thread while the loading window keeps painting; the tabs and `wb_window.py` (the main window) load on the main thread after them. Runs with `--screenshot` skip the one-copy check.
 - **Long work runs on a thread pool** (`wb_common.run_in_background`) and reports back through Qt signals. Invoices and voice turns each get a pool with a single thread: one model on a 12 GB GPU at a time.
 - **Sound uses Windows' MME devices**, which resample for you; WASAPI refuses 16 kHz recording on a 48 kHz microphone.
 - **Bugs the self-test found:** workers could be garbage-collected before their results reached the window (now kept alive until done), and two threads opening the ChromaDB folder at once crashed (one client per folder, created under a lock). After a Swedish question, a typed English message got a Swedish reply; the detected language is now sent with every turn.
