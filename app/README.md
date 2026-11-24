@@ -10,8 +10,17 @@ One Windows program for the five projects: settings in one place, file handling 
 | **Voice** | Hold to talk (or click to start/stop), live input level, the conversation as text, a box for typed messages, Stop speaking, New conversation |
 | **Invoices** | Add invoices (they're copied to the inbox), process now or watch the inbox, a table of processed invoices, the review list with the reason and a retry button, open the CSV in Excel |
 | **Research** | Ask a question, watch the agent's steps live, read the report, and see the grounding check (numbers/IDs that weren't in any page it read); earlier reports in a list |
+| **TV** | Find a Samsung TV on the network, turn it on (Wake-on-LAN) or off, favourites such as "CNN = Samsung TV Plus, channel 4556" (one click wakes the TV, opens the app and types the channel), open apps, type channel numbers, and a remote (arrows, OK, Back, Home, volume, channels, guide) |
 | **Evaluation** | Run the RAG or invoice test suite, failures first with the reason, open promptfoo's web viewer |
 | **Settings** | Models per task (filled from Ollama), folders, microphone and speakers, speech model and device, voices (with Listen and a voice library), speed and volume, push-to-talk, answer/research tuning, Vikunja, promptfoo, updates |
+
+## TV
+
+`wb_tv.py` talks to Samsung Tizen TVs (2016 and later) on the local network: their REST API on port 8001 for finding the TV and its power state, Wake-on-LAN to turn it on, and the remote-control websocket on port 8002 for buttons and apps. Nothing about the TV is in the code: *Find TV* scans the local network and stores the TV's address and MAC in the settings.
+
+- **On the TV, once:** turn on Settings → General → Network → Expert Settings → *Power On with Mobile*, or Wake-on-LAN does nothing. The first command shows an *Allow* question for "AI Workbench"; the pairing token is kept in `%APPDATA%\AI Workbench\tv-token`.
+- **Voice:** when a TV is set up, the voice assistant gets four tools (`wb_tv_tools.py`): `tv_power`, `tv_watch` (a favourite, an app or a channel number), `tv_volume` and `tv_status`. "Put CNN on the TV", "turn the volume down two steps" and "Höj volymen på tv:n två steg" each picked the right tool in testing.
+- **Limits:** the TV can't say what's on screen, only whether it's on. It answers only the app list it was built with; other apps can be opened by their app id (`sdb shell 0 applist` lists them in Developer Mode).
 
 ## Voices
 

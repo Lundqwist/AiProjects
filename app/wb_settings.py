@@ -78,6 +78,12 @@ class Settings:
     vikunja_url: str = "http://localhost:3456"
     vikunja_token_env: str = "VIKUNJA_TOKEN"
 
+    # TV (filled by "Find TV"; nothing about the TV is in the code)
+    tv_ip: str = ""
+    tv_mac: str = ""
+    tv_name: str = ""
+    tv_favorites: list = field(default_factory=list)  # [{"name": "CNN", "app": "Samsung TV Plus", "channel": "4556"}]
+
     # Evaluation
     promptfoo_path: str = field(default_factory=_promptfoo)
     eval_dir: str = str(ROOT / "05-eval")

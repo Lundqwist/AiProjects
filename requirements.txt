@@ -16,3 +16,4 @@ soundfile>=0.14.0
 streamlit>=1.67.0
 trafilatura>=2.4.0
 watchdog>=7.1.1
+websocket-client>=1.9.2

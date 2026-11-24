@@ -35,6 +35,7 @@ from tab_eval import EvalTab  # noqa: E402
 from tab_invoices import InvoicesTab  # noqa: E402
 from tab_research import ResearchTab  # noqa: E402
 from tab_settings import SettingsTab  # noqa: E402
+from tab_tv import TvTab  # noqa: E402
 from tab_voice import VoiceTab  # noqa: E402
 import wb_updates  # noqa: E402
 from updates_dialog import UpdatesDialog  # noqa: E402
@@ -63,11 +64,12 @@ class MainWindow(QMainWindow):
         self.invoices = InvoicesTab(s, status)
         self.research = ResearchTab(s, status)
         self.evaluation = EvalTab(s, status)
+        self.tv = TvTab(s, status)
         self.settings_tab = SettingsTab(s)
         self.settings_tab.saved.connect(self.settings_saved)
         for widget, name in ((self.documents, "Documents"), (self.voice, "Voice"),
                              (self.invoices, "Invoices"), (self.research, "Research"),
-                             (self.evaluation, "Evaluation"), (self.settings_tab, "Settings")):
+                             (self.tv, "TV"), (self.evaluation, "Evaluation"), (self.settings_tab, "Settings")):
             self.tabs.addTab(widget, name)
         self.tabs.setCurrentIndex(min(s.last_tab, self.tabs.count() - 1))
         self.setCentralWidget(self.tabs)

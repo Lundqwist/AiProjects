@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPro
                                QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
 import voice
+import wb_tv_tools
 from wb_common import run_in_background
 from wb_settings import Settings
 
@@ -79,14 +80,26 @@ class VoiceTab(QWidget):
     def apply_settings(self):
         """Called after Settings are saved: the models are reloaded on the next turn."""
         self.bot = None
+        self._sync_tools()
         ptt = self.s.push_to_talk
         self.talk.setCheckable(not ptt)
         self.talk.setText("Hold to talk" if ptt else "Click to talk")
+        tv = " Say \"turn on CNN\" or \"turn the volume down\" to run the TV." if self.s.tv_ip else ""
         self.hint.setText("Speak English or Swedish; the reply comes in the same language. "
-                          "Ask \"what's on my to-do list?\" to hear your Vikunja tasks. "
+                          f"Ask \"what's on my to-do list?\" to hear your Vikunja tasks.{tv} "
                           f"Model: {self.s.agent_model} · speech recognition: Whisper {self.s.whisper_size}")
 
+    def _sync_tools(self):
+        """TV tools are offered to the model only when a TV is set up (Find TV can happen any time)."""
+        wb_tv_tools.configure(self.s)
+        if self.s.tv_ip:
+            voice.TOOLS.update(wb_tv_tools.TOOLS)
+        else:
+            for name in wb_tv_tools.TOOLS:
+                voice.TOOLS.pop(name, None)
+
     def _ensure_bot(self, emit):
+        self._sync_tools()
         if self.bot is None:
             emit("Loading speech recognition and voices (first time only)…")
             s = self.s
