@@ -17,7 +17,12 @@ from wb_common import run_in_background
 from wb_settings import Settings
 
 SYSTEM = ("You are a helpful expert. Answer correctly and clearly; use Markdown, with code in fenced blocks. "
-          "Say so when you are unsure or don't know, instead of guessing.")
+          "Say so when you are unsure or don't know, instead of guessing.\n"
+          "This chat (the Experts tab) answers with text and writes files. Things done on the PC, such as opening "
+          "programs, running the TV, Spotify, adding or finishing Vikunja tasks, checking or restarting the home "
+          "lab's services and media keys, are done by the voice assistant in the same program. You can't pass "
+          "requests on to it yourself, so if asked for one, say in one sentence that the voice assistant does that: "
+          "type or say the request in the Voice tab (or say \"Hey Luna\"). Don't claim it is impossible.")
 FILES_SYSTEM = """
 You CAN create files. When the user asks for a website, a program, a script or any files, write every file
 COMPLETE in exactly this form, one after another:

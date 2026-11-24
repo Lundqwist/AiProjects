@@ -324,8 +324,22 @@ def wants_online(s: Settings, messages: list[dict], task: str, big: bool | None)
     return False, ""
 
 
+LOCAL_IDENTITY = """Facts about you: you are the {model} model, running locally on the user's own Windows PC
+through Ollama, inside the user's program AI Workbench. You are not running on Google's, OpenAI's, Alibaba's
+or any other company's servers, and nothing you are given leaves this PC. Never say otherwise."""
+
+
+def _with_identity(messages: list[dict], model: str) -> list[dict]:
+    """Models repeat their training ("I run on Google's servers"): tell them where they really run."""
+    note = LOCAL_IDENTITY.format(model=model)
+    if messages and messages[0]["role"] == "system":
+        return [{"role": "system", "content": note + "\n\n" + messages[0]["content"]}] + messages[1:]
+    return [{"role": "system", "content": note}] + messages
+
+
 def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: float) -> tuple[str, bool]:
     model = expert_model(s, key)
+    messages = _with_identity(messages, model)
     extra = {}
     if model.startswith(THINKERS):
         extra["think"] = key == "reasoning"  # the reasoning expert thinks first; others answer at once
