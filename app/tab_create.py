@@ -107,7 +107,7 @@ class CreatorPage(QWidget):
             return
         self.busy = True
         self.go.setEnabled(False)
-        self.state.setText("Startingâ€¦")
+        self.state.setText("Starting…")
 
         def done(made):
             self.status(f"Made by {made.by}")
@@ -125,8 +125,8 @@ class CreatorPage(QWidget):
 
 class ImagePage(CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "image", "Describe a picture, in English or Swedish: â€œa fox reading a book by a "
-                                             "campfire, watercolourâ€")
+        super().__init__(s, status, "image", "Describe a picture, in English or Swedish: “a fox reading a book by a "
+                                             "campfire, watercolour”")
         self.size = QComboBox()
         self.size.addItems(list(wb_create.SIZES))
         self.improve = QCheckBox("Improve my description first")
@@ -156,8 +156,8 @@ class ImagePage(CreatorPage):
 
 class MusicPage(CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "music", "Describe the music: â€œcalm lo-fi beat with piano and rainâ€, "
-                                             "â€œepic orchestral battle themeâ€")
+        super().__init__(s, status, "music", "Describe the music: “calm lo-fi beat with piano and rain”, "
+                                             "“epic orchestral battle theme”")
         self.seconds = QSpinBox(minimum=3, maximum=30, value=15)
         self.seconds.setSuffix(" seconds")
         self.improve = QCheckBox("Improve my description first")
@@ -174,9 +174,9 @@ class MusicPage(CreatorPage):
         box = QWidget()
         v = QVBoxLayout(box)
         self.music_info = QTextBrowser()
-        play = QPushButton("â–¶ Play")
+        play = QPushButton("▶ Play")
         play.clicked.connect(lambda: self.player.play())
-        stop = QPushButton("â–  Stop")
+        stop = QPushButton("■ Stop")
         stop.clicked.connect(lambda: self.player.stop())
         row = QHBoxLayout()
         row.addWidget(play)
@@ -218,11 +218,11 @@ class PlayerMixin:
             self.video_out.setMinimumHeight(280)
             self.player.setVideoOutput(self.video_out)
             v.addWidget(self.video_out, 3)
-        play = QPushButton("â–¶ Play")
+        play = QPushButton("▶ Play")
         play.clicked.connect(lambda: self.player.play())
-        pause = QPushButton("âšâš Pause")
+        pause = QPushButton("❚❚ Pause")
         pause.clicked.connect(lambda: self.player.pause())
-        stop = QPushButton("â–  Stop")
+        stop = QPushButton("■ Stop")
         stop.clicked.connect(lambda: self.player.stop())
         row = QHBoxLayout()
         for b in (play, pause, stop):
@@ -243,8 +243,8 @@ class PlayerMixin:
 
 class SongPage(PlayerMixin, CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "song", "What is the song about? â€œa happy summer song about the archipelagoâ€, "
-                                            "â€œen vaggvisa om mÃ¥nenâ€")
+        super().__init__(s, status, "song", "What is the song about? “a happy summer song about the archipelago”, "
+                                            "“en vaggvisa om månen”")
         self.style = QLineEdit()
         self.style.setPlaceholderText("style (optional), e.g. pop, acoustic guitar, female vocal, 110 BPM")
         self.length = QComboBox()
@@ -258,7 +258,7 @@ class SongPage(PlayerMixin, CreatorPage):
         for w in (self.style, self.length, self.language, self.own, self.online):
             self.options.addWidget(w)
         self.lyrics = QPlainTextEdit()
-        self.lyrics.setPlaceholderText("Your lyrics, with the parts marked:\n[Verse 1]\nâ€¦\n[Chorus]\nâ€¦")
+        self.lyrics.setPlaceholderText("Your lyrics, with the parts marked:\n[Verse 1]\n…\n[Chorus]\n…")
         self.lyrics.setMaximumHeight(140)
         self.lyrics.hide()
         self.own.toggled.connect(self.lyrics.setVisible)
@@ -277,9 +277,9 @@ class SongPage(PlayerMixin, CreatorPage):
         d = rec.details if rec else {}
         lyrics = str(d.get("lyrics", "")).replace("\n", "  \n")
         self.info.setMarkdown(f"## {d.get('title', path.stem)}\n\n*{d.get('style', '')}*  \n"
-                              f"{d.get('language', '')} Â· {d.get('seconds', '?')} s"
-                              f"{' Â· ' + str(d['bpm']) + ' BPM' if d.get('bpm') else ''}"
-                              f"{' Â· ' + str(d['key']) if d.get('key') else ''}\n\n{lyrics}")
+                              f"{d.get('language', '')} · {d.get('seconds', '?')} s"
+                              f"{' · ' + str(d['bpm']) + ' BPM' if d.get('bpm') else ''}"
+                              f"{' · ' + str(d['key']) if d.get('key') else ''}\n\n{lyrics}")
 
     def work(self, idea, emit):
         import wb_song
@@ -291,8 +291,8 @@ class SongPage(PlayerMixin, CreatorPage):
 
 class MoviePage(PlayerMixin, CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "movie", "What is the movie about? â€œa lighthouse keeper who befriends a lost "
-                                             "whaleâ€, â€œen katt som reser till mÃ¥nenâ€")
+        super().__init__(s, status, "movie", "What is the movie about? “a lighthouse keeper who befriends a lost "
+                                             "whale”, “en katt som reser till månen”")
         import wb_movie
         self.length = QComboBox()
         self.length.addItems(list(wb_movie.LENGTHS))
@@ -320,8 +320,8 @@ class MoviePage(PlayerMixin, CreatorPage):
         rec = wb_create.load_record(path)
         d = rec.details if rec else {}
         scenes = "\n".join(f"{i}. {sc.get('narration', '')}" for i, sc in enumerate(d.get("scenes", []), 1))
-        self.info.setMarkdown(f"## {d.get('title', path.stem)}\n\n{d.get('style', '')} Â· {d.get('language', '')} Â· "
-                              f"{d.get('seconds', '?')} s Â· voice {d.get('voice', '?')}\n\n{scenes}\n\n"
+        self.info.setMarkdown(f"## {d.get('title', path.stem)}\n\n{d.get('style', '')} · {d.get('language', '')} · "
+                              f"{d.get('seconds', '?')} s · voice {d.get('voice', '?')}\n\n{scenes}\n\n"
                               f"Scene pictures, narration and subtitles: folder *{d.get('folder', '')}*")
 
     def work(self, idea, emit):
@@ -333,8 +333,8 @@ class MoviePage(PlayerMixin, CreatorPage):
 
 class StoryPage(CreatorPage):
     def __init__(self, s, status):
-        super().__init__(s, status, "story", "What is the story about? â€œa robot who is afraid of the darkâ€, "
-                                             "â€œen drake som vill bli kockâ€")
+        super().__init__(s, status, "story", "What is the story about? “a robot who is afraid of the dark”, "
+                                             "“en drake som vill bli kock”")
         self.genre = QLineEdit()
         self.genre.setPlaceholderText("genre, e.g. fantasy, children's, mystery")
         self.length = QComboBox()
