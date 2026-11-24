@@ -9,6 +9,7 @@ db/
 .eval-db/
 02-voice/voices/
 02-voice/test-audio/
+02-voice/voice-samples/
 03-invoices/inbox/
 03-invoices/output/
 04-research/reports/

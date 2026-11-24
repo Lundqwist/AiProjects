@@ -28,7 +28,7 @@ from piper import PiperVoice, SynthesisConfig
 HERE = Path(__file__).parent
 CHAT_MODEL = "qwen3:8b"  # supports tool calls, and is fast enough for conversation
 WHISPER_SIZE = "small"
-VOICES = {"sv": "sv_SE-nst-medium", "en": "en_US-lessac-medium"}
+VOICES = {"sv": "sv_SE-alma-medium", "en": "en_US-amy-medium"}  # both female
 RATE = 16000  # Whisper wants 16 kHz mono
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:

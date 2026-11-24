@@ -11,7 +11,27 @@ One Windows program for the five projects: settings in one place, file handling 
 | **Invoices** | Add invoices (they're copied to the inbox), process now or watch the inbox, a table of processed invoices, the review list with the reason and a retry button, open the CSV in Excel |
 | **Research** | Ask a question, watch the agent's steps live, read the report, and see the grounding check (numbers/IDs that weren't in any page it read); earlier reports in a list |
 | **Evaluation** | Run the RAG or invoice test suite, failures first with the reason, open promptfoo's web viewer |
-| **Settings** | Models per task (filled from Ollama), folders, microphone and speakers, speech model and device, voices, speed and volume, push-to-talk, answer/research tuning, Vikunja, promptfoo |
+| **Settings** | Models per task (filled from Ollama), folders, microphone and speakers, speech model and device, voices (with Listen and a voice library), speed and volume, push-to-talk, answer/research tuning, Vikunja, promptfoo, updates |
+
+## Voices
+
+The default voices are female: **Amy** (English, US) and **Alma** (Swedish). Settings → *Voice library…* lists every English and Swedish Piper voice, marked female or male, with a filter; *Listen* downloads a voice (about 60 MB) and plays a sample, and *Use this voice* picks it. Piper's catalog has no gender field, so `wb_voices.py` keeps a list of the single-speaker voices whose speaker is known.
+
+All installed voices were checked by running a sample through Whisper; each was understood word for word (apart from "i dag" vs "idag").
+
+## Updates at startup
+
+When the program opens, it checks in the background (about 10 seconds, without blocking anything):
+
+| Check | Needed (pre-ticked) | Optional |
+|---|---|---|
+| Ollama | not running; a model your settings use isn't downloaded | a newer build of a model (its manifest digest differs from Ollama's registry); a newer Ollama release (you install it) |
+| Voices | a chosen voice isn't downloaded | |
+| Python packages | missing or older than `requirements.txt` | a newer release on PyPI |
+| The program | | new commits on GitHub (`git pull --ff-only`) |
+| promptfoo | | not installed, or a newer version on npm |
+
+Nothing is installed without your click. Models, voices and promptfoo install while the program runs. Python packages and program code are in use while it runs, so `apply_updates.py` applies them after the program closes, in a small window, and then starts it again. Its log is `%APPDATA%\AI Workbench\update.log`. *Not now* hides the optional updates shown until a newer version comes out. Turn the startup check off, or run it by hand, in Settings → Integrations → Updates.
 
 ## Run
 

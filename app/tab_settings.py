@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout
                                QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget)
 
 import voice
+import wb_voices
+from voice_library import VoiceLibrary
 from wb_common import PathPicker, open_path, run_in_background
 from wb_settings import SETTINGS_FILE, Settings
 
@@ -29,6 +31,7 @@ def _combo(items: list[str], current: str, editable: bool = True) -> QComboBox:
 
 class SettingsTab(QWidget):
     saved = Signal()
+    check_now = Signal()
 
     def __init__(self, settings: Settings):
         super().__init__()
@@ -124,9 +127,8 @@ class SettingsTab(QWidget):
         self._fill_devices()
         self.whisper_size = _combo(["tiny", "base", "small", "medium", "large-v3"], self.s.whisper_size, False)
         self.whisper_device = _combo(["auto", "cuda", "cpu"], self.s.whisper_device, False)
-        voices = sorted(p.stem for p in Path(self.s.voices_dir).glob("*.onnx"))
-        self.voice_en = _combo(voices, self.s.voice_en, False)
-        self.voice_sv = _combo(voices, self.s.voice_sv, False)
+        self.voice_en, self.voice_sv = QComboBox(), QComboBox()
+        self._fill_voices()
 
         self.speed = QSlider(Qt.Horizontal, minimum=50, maximum=200)
         self.speed_label = QLabel()
@@ -157,8 +159,8 @@ class SettingsTab(QWidget):
         f.addRow("", tests)
         f.addRow("Speech recognition model", self.whisper_size)
         f.addRow("Run speech recognition on", self.whisper_device)
-        f.addRow("English voice", self.voice_en)
-        f.addRow("Swedish voice", self.voice_sv)
+        f.addRow("English voice", self._voice_row(self.voice_en, "en"))
+        f.addRow("Swedish voice", self._voice_row(self.voice_sv, "sv"))
         f.addRow("Speaking speed", self._with_label(self.speed, self.speed_label))
         f.addRow("Voice volume", self._with_label(self.volume, self.volume_label))
         f.addRow("", self.speak_replies)
@@ -194,7 +196,57 @@ class SettingsTab(QWidget):
         f.addRow("", note)
         f.addRow("promptfoo program", self.promptfoo_path)
         f.addRow("Evaluation folder", self.eval_dir)
+        self.check_updates = QCheckBox("Check for updates when the program starts")
+        check_now = QPushButton("Check for updates now")
+        check_now.clicked.connect(self.check_now.emit)
+        row = QHBoxLayout()
+        row.addWidget(self.check_updates)
+        row.addWidget(check_now)
+        row.addStretch()
+        f.addRow("Updates", row)
         return g
+
+    def _voice_row(self, combo: QComboBox, lang: str) -> QWidget:
+        listen = QPushButton("Listen")
+        listen.clicked.connect(lambda: self._preview(combo.currentData()))
+        library = QPushButton("Voice library…")
+        library.clicked.connect(lambda: self.open_library(lang))
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(combo, 1)
+        h.addWidget(listen)
+        h.addWidget(library)
+        return w
+
+    def _fill_voices(self, en: str | None = None, sv: str | None = None):
+        voices_dir = self.voices_dir.text() if hasattr(self, "voices_dir") else self.s.voices_dir
+        for combo, lang, current in ((self.voice_en, "en", en or self.s.voice_en),
+                                     (self.voice_sv, "sv", sv or self.s.voice_sv)):
+            combo.clear()
+            for name in wb_voices.installed(voices_dir, lang):
+                combo.addItem(wb_voices.label(name), name)
+            if combo.findData(current) < 0:
+                combo.addItem(f"{current} (not downloaded)", current)
+            combo.setCurrentIndex(combo.findData(current))
+
+    def _preview(self, name: str):
+        if not name:
+            return
+        run_in_background(lambda emit: wb_voices.preview(
+            name, self.voices_dir.text(), self.speed.value() / 100, self.volume.value() / 100,
+            self.output_device.currentData()))
+
+    def open_library(self, lang: str):
+        combo = self.voice_en if lang == "en" else self.voice_sv
+        dlg = VoiceLibrary(self, self.voices_dir.text(), lang, combo.currentData(),
+                           self.speed.value() / 100, self.volume.value() / 100,
+                           self.output_device.currentData())
+        if dlg.exec() and dlg.chosen:
+            chosen_lang, name = dlg.chosen
+            self._fill_voices(en=name if chosen_lang == "en" else self.voice_en.currentData(),
+                              sv=name if chosen_lang == "sv" else self.voice_sv.currentData())
+            self.saved_label.setText("Voice changed: press Save settings to keep it")
 
     @staticmethod
     def _with_label(slider, label) -> QWidget:
@@ -221,9 +273,10 @@ class SettingsTab(QWidget):
         s = self.s
         for combo, value in ((self.chat_model, s.chat_model), (self.vision_model, s.vision_model),
                              (self.embed_model, s.embed_model), (self.agent_model, s.agent_model),
-                             (self.whisper_size, s.whisper_size), (self.whisper_device, s.whisper_device),
-                             (self.voice_en, s.voice_en), (self.voice_sv, s.voice_sv)):
+                             (self.whisper_size, s.whisper_size), (self.whisper_device, s.whisper_device)):
             combo.setCurrentText(value)
+        self._fill_voices(s.voice_en, s.voice_sv)
+        self.check_updates.setChecked(s.check_updates_at_start)
         self.host.setText(s.ollama_host)
         for picker, value in ((self.rag_db, s.rag_db), (self.invoice_inbox, s.invoice_inbox),
                               (self.invoice_output, s.invoice_output), (self.reports_dir, s.reports_dir),
@@ -258,7 +311,8 @@ class SettingsTab(QWidget):
         s.output_device = self.output_device.currentData()
         s.whisper_size = self.whisper_size.currentText()
         s.whisper_device = self.whisper_device.currentText()
-        s.voice_en, s.voice_sv = self.voice_en.currentText(), self.voice_sv.currentText()
+        s.voice_en, s.voice_sv = self.voice_en.currentData(), self.voice_sv.currentData()
+        s.check_updates_at_start = self.check_updates.isChecked()
         s.speech_speed = self.speed.value() / 100
         s.speech_volume = self.volume.value() / 100
         s.speak_replies = self.speak_replies.isChecked()
@@ -327,8 +381,8 @@ class SettingsTab(QWidget):
                           QMessageBox.warning(self, "Microphone", e)))
 
     def test_voice(self):
-        cfg = dict(voices_dir=Path(self.voices_dir.text()), en=self.voice_en.currentText(),
-                   sv=self.voice_sv.currentText(), speed=self.speed.value() / 100,
+        cfg = dict(voices_dir=Path(self.voices_dir.text()), en=self.voice_en.currentData(),
+                   sv=self.voice_sv.currentData(), speed=self.speed.value() / 100,
                    volume=self.volume.value() / 100, out=self.output_device.currentData())
 
         def work(emit):

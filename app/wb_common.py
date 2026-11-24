@@ -27,14 +27,17 @@ class Worker(QRunnable):
 
     def run(self):
         try:
-            result = self.fn(*self.args, emit=self.signals.progress.emit, **self.kwargs)
-        except Exception as e:
-            traceback.print_exc()
-            self.signals.error.emit(f"{type(e).__name__}: {e}")
-        else:
-            self.signals.result.emit(result)
-        finally:
-            self.signals.done.emit()
+            try:
+                result = self.fn(*self.args, emit=self.signals.progress.emit, **self.kwargs)
+            except Exception as e:
+                traceback.print_exc()
+                self.signals.error.emit(f"{type(e).__name__}: {e}")
+            else:
+                self.signals.result.emit(result)
+            finally:
+                self.signals.done.emit()
+        except RuntimeError:
+            pass  # the window was closed while this ran: nobody is left to tell
 
 
 _running: set[Worker] = set()  # strong references: otherwise Python may collect a worker (and its

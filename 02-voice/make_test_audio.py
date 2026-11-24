@@ -6,9 +6,9 @@ from piper import PiperVoice
 
 HERE = Path(__file__).parent
 QUESTIONS = {
-    "q-en.wav": ("en_US-lessac-medium", "What is the tallest mountain in Sweden?"),
-    "q-sv.wav": ("sv_SE-nst-medium", "Vad är huvudstaden i Norge?"),
-    "q-tasks.wav": ("en_US-lessac-medium", "What is on my to do list?"),
+    "q-en.wav": ("en_US-amy-medium", "What is the tallest mountain in Sweden?"),
+    "q-sv.wav": ("sv_SE-alma-medium", "Vad är huvudstaden i Norge?"),
+    "q-tasks.wav": ("en_US-amy-medium", "What is on my to do list?"),
 }
 
 if __name__ == "__main__":

@@ -66,8 +66,8 @@ class Settings:
     output_device: int | None = None
     whisper_size: str = "small"
     whisper_device: str = "auto"      # auto, cuda, cpu
-    voice_en: str = "en_US-lessac-medium"
-    voice_sv: str = "sv_SE-nst-medium"
+    voice_en: str = "en_US-amy-medium"     # female
+    voice_sv: str = "sv_SE-alma-medium"    # female
     voices_dir: str = str(ROOT / "02-voice" / "voices")
     speech_speed: float = 1.0
     speech_volume: float = 1.0
@@ -82,9 +82,14 @@ class Settings:
     promptfoo_path: str = field(default_factory=_promptfoo)
     eval_dir: str = str(ROOT / "05-eval")
 
+    # Updates
+    check_updates_at_start: bool = True
+    skipped_updates: list = field(default_factory=list)  # optional updates the user said "not now" to
+
     # Window
     window_geometry: str = ""
     last_tab: int = 0
+    settings_version: int = 2
 
     @classmethod
     def load(cls) -> "Settings":
@@ -96,6 +101,14 @@ class Settings:
                 for k, v in data.items():
                     if k in names:
                         setattr(s, k, v)
+                if data.get("settings_version", 1) < 2:
+                    # Version 2 switched the default voices to female ones; only replace the old
+                    # defaults, never a voice the user picked themselves
+                    if s.voice_en == "en_US-lessac-medium":
+                        s.voice_en = "en_US-amy-medium"
+                    if s.voice_sv == "sv_SE-nst-medium":
+                        s.voice_sv = "sv_SE-alma-medium"
+                    s.settings_version = 2
             except (OSError, ValueError):
                 pass  # a broken file falls back to defaults; saving rewrites it
         return s

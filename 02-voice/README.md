@@ -2,7 +2,7 @@
 
 Talk to it, it talks back, in English or Swedish. Speech-to-text, the answer and the voice all run locally.
 
-**Stack:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`small`) · Ollama `qwen3:8b` with tool calling · [Piper](https://github.com/OHF-Voice/piper1-gpl) voices `en_US-lessac-medium` and `sv_SE-nst-medium`
+**Stack:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`small`) · Ollama `qwen3:8b` with tool calling · [Piper](https://github.com/OHF-Voice/piper1-gpl) female voices `en_US-amy-medium` and `sv_SE-alma-medium`
 
 ## How it works
 
@@ -16,7 +16,7 @@ Talk to it, it talks back, in English or Swedish. Speech-to-text, the answer and
 ```powershell
 .\.venv\Scripts\Activate.ps1
 cd 02-voice
-python -m piper.download_voices en_US-lessac-medium sv_SE-nst-medium --data-dir voices
+python -m piper.download_voices en_US-amy-medium sv_SE-alma-medium --data-dir voices
 python voice.py
 ```
 

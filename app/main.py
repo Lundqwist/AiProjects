@@ -36,6 +36,8 @@ from tab_invoices import InvoicesTab  # noqa: E402
 from tab_research import ResearchTab  # noqa: E402
 from tab_settings import SettingsTab  # noqa: E402
 from tab_voice import VoiceTab  # noqa: E402
+import wb_updates  # noqa: E402
+from updates_dialog import UpdatesDialog  # noqa: E402
 from wb_common import THEME, run_in_background  # noqa: E402
 
 
@@ -70,9 +72,34 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(min(s.last_tab, self.tabs.count() - 1))
         self.setCentralWidget(self.tabs)
 
+        self.settings_tab.check_now.connect(lambda: self.check_updates(manual=True))
         self.check_ollama()
         self.ollama_timer = QTimer(self, interval=30000, timeout=self.check_ollama)
         self.ollama_timer.start()
+        if s.check_updates_at_start and "--no-update-check" not in sys.argv:
+            QTimer.singleShot(1500, self.check_updates)
+
+    def check_updates(self, manual: bool = False):
+        self.statusBar().showMessage("Checking for updates…")
+
+        def show(updates):
+            # optional updates the user said "not now" to stay hidden until a newer version appears
+            shown = [u for u in updates if u.required or manual or u.skip_key not in self.s.skipped_updates]
+            if not shown:
+                self.statusBar().showMessage("Everything is up to date", 8000)
+                return
+            self.statusBar().clearMessage()
+            dlg = UpdatesDialog(self, self.s, shown)
+            if dlg.exec() == 2:  # updates scheduled for after a restart
+                self.close()
+                return
+            self.settings_tab.load_values()  # e.g. a newly downloaded voice
+            self.voice.apply_settings()
+            self.check_ollama()
+
+        run_in_background(wb_updates.check_all, self.s, on_progress=lambda m: self.statusBar().showMessage(m),
+                          on_result=show,
+                          on_error=lambda e: self.statusBar().showMessage(f"Update check failed: {e}", 10000))
 
     def settings_saved(self):
         self.voice.apply_settings()
@@ -119,6 +146,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("AI Workbench")
     app.setStyleSheet(THEME)
+    if "--screenshot" in sys.argv:
+        sys.argv.append("--no-update-check")
     w = MainWindow(settings)
     w.show()
     if "--screenshot" in sys.argv:  # used by tests: save a picture of each tab and quit
