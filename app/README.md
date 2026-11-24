@@ -1,6 +1,6 @@
 # AI Workbench
 
-One Windows program for the five projects: settings in one place, file handling with dialogs and drag-and-drop, a push-to-talk voice tab with device choice, and the test suites one click away. Everything runs locally on Ollama.
+One Windows program for the five projects: settings in one place, file handling with dialogs and drag-and-drop, a push-to-talk voice tab with device choice, and the test suites one click away. Everything runs locally on Ollama, except larger jobs you allow an online AI to take.
 
 **Stack:** Python 3.12 · PySide6 (Qt 6) · the project modules in `01-rag` … `05-eval`, imported directly
 
@@ -10,12 +10,22 @@ It opens on a front page in lundqwist.se's navy and gold, like StoryMaker: the L
 |---|---|
 | **Home** | The front page: one card per tab below |
 | **Documents** | Add PDFs, Markdown and text (Add files / Add folder / drag-and-drop), see each file's chunk count, remove files, and chat with answers that cite their sources |
+| **Experts** | Ask anything, or paste code or a text to work on. The question goes to the local expert that fits it (code, reasoning, writing or general), or to the one you pick; tick *Larger job* (or set online AI to Always) to let an online AI take it. Every answer ends with who answered, where it ran (this PC or online), why it was picked, the tokens used and anything skipped on the way |
 | **Voice** | Hold to talk (or click to start/stop), live input level, the conversation as text, a box for typed messages, Stop speaking, New conversation. While a question is worked on, a moving bar shows the step (Transcribing, Thinking, Searching the web, Reading your CV, Speaking) and the seconds so far; it turns red when one step takes over 60 s, *Stop waiting* gives up on the question and listens again, and after 4 minutes it gives up by itself. Web search, page reading and the CV (`wb_web_tools.py`, the public lundqwist.se CV) are tools too |
 | **Invoices** | Add invoices (they're copied to the inbox), process now or watch the inbox, a table of processed invoices, the review list with the reason and a retry button, open the CSV in Excel |
 | **Research** | Ask a question, watch the agent's steps live, read the report, and see the grounding check (numbers/IDs that weren't in any page it read); earlier reports in a list |
 | **TV** | Find a Samsung TV on the network, turn it on (Wake-on-LAN) or off, favourites such as "CNN = Samsung TV Plus, channel 4556" (one click wakes the TV, opens the app and types the channel), open apps, type channel numbers, and a remote (arrows, OK, Back, Home, volume, channels, guide) |
 | **Evaluation** | Run the RAG or invoice test suite, failures first with the reason, open promptfoo's web viewer |
 | **Settings** | Models per task (filled from Ollama), folders, microphone and speakers, speech model and device, voices (with Listen and a voice library), speed and volume, push-to-talk, answer/research tuning, Vikunja, promptfoo, updates |
+
+## Experts and online AI
+
+`wb_ai.py` decides who does a job and records who did it.
+
+- **Local experts** are Ollama models per kind of work: Code (`qwen2.5-coder:7b`), Reasoning (`deepseek-r1:8b`, thinks step by step first), Writing (`gemma3:12b`, also Swedish) and General (the Documents model). The Experts tab picks one from the words in the question (whole words: "capital" is not "api") and says which words decided it. The voice assistant can hand code, maths and long writing to them with its `ask_expert` tool.
+- **Online AI** (Settings → Experts and online AI) is a list tried from the top: Claude, or any OpenAI-compatible service (OpenAI, Gemini, OpenRouter, Groq, Mistral presets). Each one names the environment variable that holds its key; no key is stored. Modes: *Off*, *Larger jobs* (research reports, jobs over a set length, or a ticked question) and *Always*.
+- **Until the tokens run out:** a service is used until it says its credit is gone (then it is skipped until the 1st of next month), reaches the monthly token limit you set (0 = none), or rejects its key (skipped until the key changes). Rate limits pause it for 5 minutes. Then the next one is tried, and at last a local expert. *Try again* in Settings forgets these marks after you buy credit. Token use per service and month is in `%APPDATA%\AI Workbench\online-usage.json`.
+- **Where an answer came from:** Experts answers end with a credit line; Documents answers name the model, the passages and files used and that nothing went online (your documents only go online if *Also send passages from my documents* is ticked); research reports end with **Who did the work** (pages found and read by the local agent, report written by the online AI when it had tokens, or why it didn't); voice replies list the model and what it used (searched the web for…, read svt.se, asked the code expert), and the assistant is told to say its source out loud.
 
 ## What the assistant may do (Access tab)
 

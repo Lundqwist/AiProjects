@@ -130,6 +130,29 @@ docs.ask()
 wait(lambda: not docs.busy, 180)
 answer = docs.chat[-1]["a"] if docs.chat else ""
 record("documents: cited answer", "30" in answer and "[" in answer, answer[:80].replace("\n", " "))
+credit = docs.chat[-1].get("credit", "") if docs.chat else ""
+record("documents: says who answered and that nothing went online",
+       "on this PC" in credit and "nothing was sent online" in credit, credit.replace("\n", " ")[:120])
+
+# Experts: a code question goes to the code expert and says so; provider list saves
+from tab_experts import ExpertsTab  # noqa: E402
+
+ex = ExpertsTab(s, status)
+ex.question.setPlainText("Write a Python function that returns the square of a number. Code only.")
+ex.ask()
+wait(lambda: not ex.busy, 300)
+t = ex.turns[-1] if ex.turns else {"a": "", "credit": ""}
+record("experts: code question -> code expert, with a credit line",
+       "Code expert" in t["credit"] and "def " in t["a"], t["credit"].replace("\n", " ")[:120])
+tab._add_provider({"name": "Test AI", "kind": "openai", "base_url": "https://x.test/v1", "model": "m",
+                   "key_env": "NO_SUCH_KEY_VAR", "monthly_tokens": 5000, "enabled": True})
+tab.save()
+saved = Settings.load().online_providers
+record("settings: online AI list saves with its monthly limit",
+       any(p["name"] == "Test AI" and p["monthly_tokens"] == 5000 for p in saved), str([p["name"] for p in saved]))
+import wb_ai  # noqa: E402
+record("online AI without a key is skipped and says why",
+       "no key" in wb_ai.provider_state(saved[-1])[1], wb_ai.provider_state(saved[-1])[1])
 
 # 3. Invoices: copy samples to the inbox and process them
 import make_samples  # noqa: E402
@@ -281,6 +304,8 @@ if "--skip-research" not in sys.argv:
     ok = wait(lambda: rt.go.isEnabled() and rt.history.count() > 0, 300)
     record("research: report saved and shown", ok and len(rt.report.toPlainText()) > 100,
            rt.check_label.text()[:120])
+    record("research: report says who did the work", "Who did the work" in rt.report.toPlainText(),
+           next((l for l in rt.report.toPlainText().splitlines() if "Who did the work" in l), "")[:160])
 
 # 6. Evaluation tab: run the quick invoices suite through promptfoo
 from tab_eval import EvalTab  # noqa: E402

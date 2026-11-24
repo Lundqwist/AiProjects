@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QLineEdit, QLis
                                QVBoxLayout, QWidget)
 
 import rag
+import wb_ai
 from wb_common import run_in_background
 from wb_settings import Settings
 
@@ -163,17 +164,31 @@ class DocumentsTab(QWidget):
         self.chat.append(entry)
         self.render()
         temperature = self.s.temperature
+        s = self.s
 
         def work(emit):
             hits = rag.search(q)
             emit(("sources", [h.label for h in hits]))
-            for part in rag.answer_stream(q, hits, temperature=temperature):
-                emit(("text", part))
+            if not hits:
+                for part in rag.answer_stream(q, hits):
+                    emit(("text", part))
+                emit(("credit", "Nothing was searched: the document database is empty."))
+                return
+            # Your documents stay on this PC unless Settings allows online AI for them
+            a = wb_ai.ask(s, rag.build_messages(q, hits), task="documents", expert="general",
+                          big=None if s.online_for_documents else False, temperature=temperature,
+                          on_text=lambda p: emit(("text", p)) if p else None)
+            files = len({h.source for h in hits})
+            emit(("credit", f"{a.credit().replace(' · picked because you chose it', '')}\n"
+                            f"– from {len(hits)} passages in {files} of your documents (listed below)"
+                            + ("" if a.online else "; nothing was sent online")))
 
         def progress(item):
             kind, value = item
             if kind == "sources":
                 entry["sources"] = value
+            elif kind == "credit":
+                entry["credit"] = value
             else:
                 entry["thinking"] = False
                 entry["a"] += value
@@ -205,6 +220,9 @@ class DocumentsTab(QWidget):
             parts.append(f"<p style='color:#d4af37'><b>You:</b> {html.escape(e['q'])}</p>")
             answer = html.escape(e["a"]).replace("\n", "<br>") or ("<i>Thinking…</i>" if e["thinking"] else "")
             parts.append(f"<p>{answer}</p>")
+            if e.get("credit"):
+                parts.append(f"<p style='color:#d4af37; font-size:9pt'>"
+                             f"{html.escape(e['credit']).replace(chr(10), '<br>')}</p>")
             if e["sources"]:
                 items = "".join(f"<li>[{i}] {html.escape(s)}</li>" for i, s in enumerate(e["sources"], 1))
                 parts.append(f"<ul style='color:#9fb0cc; font-size:9pt'>{items}</ul>")

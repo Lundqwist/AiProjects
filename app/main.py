@@ -36,6 +36,7 @@ from wb_home import HeaderBand, HomePage  # noqa: E402
 import ollama  # noqa: E402
 from tab_documents import DocumentsTab  # noqa: E402
 from tab_eval import EvalTab  # noqa: E402
+from tab_experts import ExpertsTab  # noqa: E402
 from tab_invoices import InvoicesTab  # noqa: E402
 from tab_research import ResearchTab  # noqa: E402
 from tab_settings import SettingsTab  # noqa: E402
@@ -71,6 +72,7 @@ class MainWindow(QMainWindow):
         # the front page, as in StoryMaker: the Lundqwist emblem and a card per tool
         self.home = HomePage([
             ("Documents", "Chat with your own PDFs and notes, with sources"),
+            ("Experts", "Code, reasoning and writing experts, online AI for big jobs"),
             ("Voice", "Talk with the assistant: \"Hey Luna\", in English or Swedish"),
             ("Invoices", "Invoice PDFs and photos into checked CSV rows"),
             ("Research", "A cited report from the web, with a fact check"),
@@ -82,6 +84,7 @@ class MainWindow(QMainWindow):
         self.home.open_tab.connect(self.open_tab)
         self.tabs.addTab(self.home, "Home")
         self.documents = DocumentsTab(s, status)
+        self.experts = ExpertsTab(s, status)
         self.voice = VoiceTab(s, status)
         self.invoices = InvoicesTab(s, status)
         self.research = ResearchTab(s, status)
@@ -94,7 +97,7 @@ class MainWindow(QMainWindow):
         self.access = AccessTab(s, status)
         self.settings_tab = SettingsTab(s)
         self.settings_tab.saved.connect(self.settings_saved)
-        for widget, name in ((self.documents, "Documents"), (self.voice, "Voice"),
+        for widget, name in ((self.documents, "Documents"), (self.experts, "Experts"), (self.voice, "Voice"),
                              (self.invoices, "Invoices"), (self.research, "Research"),
                              (self.tv, "TV"), (self.access, "Access"), (self.evaluation, "Evaluation"),
                              (self.settings_tab, "Settings")):
@@ -147,6 +150,7 @@ class MainWindow(QMainWindow):
 
     def settings_saved(self):
         self.voice.apply_settings()
+        self.experts.apply_settings()
         self.documents.refresh_sources()
         self.invoices.refresh()
         self.research.load_history()
@@ -154,7 +158,8 @@ class MainWindow(QMainWindow):
         self.check_ollama()
 
     def check_ollama(self):
-        needed = {self.s.chat_model, self.s.vision_model, self.s.embed_model, self.s.agent_model}
+        needed = {self.s.chat_model, self.s.vision_model, self.s.embed_model, self.s.agent_model,
+                  self.s.code_model, self.s.reasoning_model, self.s.writing_model} - {""}
 
         def work(emit):
             return {m.model for m in ollama.list().models}

@@ -34,7 +34,8 @@ CHAT_TIMEOUT = 120  # seconds for one answer from Ollama (the first one also loa
 MAX_HISTORY = 30  # messages kept besides the system prompt
 OLD_TOOL_CHARS = 600  # earlier tool results are cut to this
 STEP_NAMES = {"web_search": "Searching the web…", "read_page": "Reading a web page…",
-              "read_my_cv": "Reading your CV…", "open_tasks": "Reading your tasks…"}
+              "read_my_cv": "Reading your CV…", "open_tasks": "Reading your tasks…",
+              "ask_expert": "Asking an expert…"}
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:
 answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbols.
@@ -134,6 +135,7 @@ class Assistant:
         # A timeout, so a stuck Ollama gives an error instead of waiting forever
         self.client = ollama.Client(timeout=CHAT_TIMEOUT)
         self.on_step = lambda text: None  # told about each step (e.g. "Searching the web…")
+        self.last_steps: list[tuple[str, dict]] = []
         print(f"Ready ({time.time() - t:.1f}s to load)")
 
     def reset(self) -> None:
@@ -178,6 +180,7 @@ class Assistant:
         hint = {"sv": "\n\n(Svara på svenska.)", "en": "\n\n(Reply in English.)"}.get(lang or "", "")
         self._trim_history()
         self.history.append({"role": "user", "content": text + hint})
+        self.last_steps = []  # (tool, arguments) used for this answer, so the screen can say where it came from
         for _ in range(6):  # room for search -> read a page or two -> CV before the spoken answer
             self.on_step("Thinking…")
             # web pages and the CV are long: the default context would cut off the conversation
@@ -187,6 +190,7 @@ class Assistant:
                 return (msg.content or "").strip()
             for call in msg.tool_calls:
                 fn = TOOLS.get(call.function.name)
+                self.last_steps.append((call.function.name, dict(call.function.arguments or {})))
                 self.on_step(STEP_NAMES.get(call.function.name, f"Using {call.function.name}…"))
                 try:
                     result = fn(**call.function.arguments) if fn else "Unknown tool"

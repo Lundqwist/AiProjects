@@ -46,6 +46,19 @@ class Settings:
     embed_model: str = "nomic-embed-text"
     agent_model: str = "qwen3:8b"         # research + voice (needs tool calling)
 
+    # Experts (wb_ai.py): a local model per kind of work; the general expert is chat_model
+    code_model: str = "qwen2.5-coder:7b"
+    reasoning_model: str = "deepseek-r1:8b"
+    writing_model: str = "gemma3:12b"
+
+    # Online AI for larger jobs, used while it has tokens. Keys stay in environment variables.
+    online_mode: str = "big"          # off, big (larger jobs only), always
+    online_min_chars: int = 6000      # a job this long counts as a larger job
+    online_for_documents: bool = False  # your own documents stay on this PC unless this is on
+    online_providers: list = field(default_factory=lambda: [
+        {"name": "Claude", "kind": "anthropic", "base_url": "https://api.anthropic.com",
+         "model": "claude-sonnet-5-5", "key_env": "ANTHROPIC_API_KEY", "monthly_tokens": 0, "enabled": True}])
+
     # Folders
     rag_db: str = str(DATA / "Document database")
     invoice_inbox: str = str(DATA / "Invoices" / "Inbox")

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPro
 
 import voice
 import wb_access
+import wb_ai
 import wb_spotify
 import wb_spotify_tools
 import wb_tv_tools
@@ -36,7 +37,10 @@ EXTRA_SYSTEM = """You CAN search the web: use web_search, then read_page on the 
 current (news, prices, job listings). You CAN read the user's CV with read_my_cv. For job hunting, read the CV
 first, then search for matching jobs and name the best two or three with company and why they fit.
 You cannot change the CV itself; to keep a job for later, offer to save it with add_task in the project
-"Remote job search" (title: job and company, with the link). Never claim you can't search the web."""
+"Remote job search" (title: job and company, with the link). Never claim you can't search the web.
+For code, maths or logic problems, or long writing (cover letters, translations), use ask_expert and pass on
+its answer in short. Always say where an answer came from: "According to <site>…", "The code expert says…",
+"From your CV…", or that it is from your own knowledge."""
 STALL_SECONDS = 60   # one step taking longer than this turns the bar red
 TURN_LIMIT = 240     # a question still not done after this is given up by itself
 BAR_OK = "QProgressBar::chunk { background: #d4af37; }"
@@ -319,6 +323,8 @@ class VoiceTab(QWidget):
         wb_spotify_tools.configure(self.s)
         voice.TOOLS.update(wb_access.TOOLS)  # programs, status, tasks, containers, media (wb_access)
         voice.TOOLS.update(wb_web_tools.TOOLS)  # web search, read a page, read the CV (read-only)
+        wb_ai.configure(self.s)
+        voice.TOOLS.update(wb_ai.TOOLS)  # hand code, maths and long writing to an expert
         for tools, on in ((wb_tv_tools.TOOLS, bool(self.s.tv_ip)),
                           (wb_spotify_tools.TOOLS, wb_spotify.connected())):
             if on:
@@ -447,7 +453,9 @@ class VoiceTab(QWidget):
             emit("Thinking…")
             answer = bot.reply(said, lang)
             t2 = time.time()
-            emit(("bot", answer, f"speech-to-text {t1 - t0:.1f}s · answer {t2 - t1:.1f}s"))
+            used = wb_ai.describe_steps(getattr(bot, "last_steps", []))
+            source = f"answered by {bot.chat_model} on this PC" + (f" · {used}" if used else " from its own knowledge")
+            emit(("bot", answer, f"{source} · speech-to-text {t1 - t0:.1f}s · answer {t2 - t1:.1f}s"))
             if speak and answer:
                 emit("Speaking…")
                 # Speak with the voice that fits the answer itself: a short English command can be
@@ -574,7 +582,7 @@ class VoiceTab(QWidget):
                 parts.append(f"<p style='color:#d4af37'><b>You</b> <small>({info})</small>: {html.escape(text)}</p>")
             else:
                 parts.append(f"<p><b>Assistant:</b> {html.escape(text)}<br>"
-                             f"<small style='color:#9fb0cc'>{info}</small></p>")
+                             f"<small style='color:#9fb0cc'>{html.escape(info)}</small></p>")
         self.view.setHtml("".join(parts))
         self.view.verticalScrollBar().setValue(self.view.verticalScrollBar().maximum())
 

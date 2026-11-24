@@ -35,6 +35,7 @@ class Research:
     def __init__(self, log):
         self.log = log
         self.sources: list[tuple[str, str]] = []  # (title, url) in the order read
+        self.texts: list[str] = []  # what was read from each page, for a separate report writer
 
     def web_search(self, query: str) -> str:
         """Search the web. Returns up to 6 results with title, url and a snippet.
@@ -60,12 +61,23 @@ class Research:
         meta = trafilatura.extract_metadata(html)
         title = (meta.title if meta and meta.title else url)
         self.sources.append((title, url))
+        self.texts.append(text[:PAGE_CHARS])
         n = len(self.sources)
         return f"Source [{n}]: {title}\n\n{text[:PAGE_CHARS]}"
 
 
-def run(question: str, on_step=print, out_dir: Path | None = None) -> tuple[str, Path]:
-    """Research a question. on_step gets a line per tool call; reports go to out_dir."""
+WRITER_SYSTEM = f"""You write research reports. Today is {datetime.now():%Y-%m-%d}.
+Use ONLY the numbered pages below; never add facts, numbers or IDs that are not in them.
+Write Markdown: a 2-3 sentence answer first, then short sections, citing pages as [1], [2].
+End with a "Sources" list: [n] title - url. Say plainly when the pages don't answer something."""
+
+
+def run(question: str, on_step=print, out_dir: Path | None = None, writer=None) -> tuple[str, Path]:
+    """Research a question. on_step gets a line per tool call; reports go to out_dir.
+
+    writer(messages) -> (report, credit) or None: writes the report from the pages read (e.g. a
+    stronger online AI). None, or a writer that returns None, keeps the local model's own report.
+    """
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = Path(out_dir or HERE / "reports")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -104,8 +116,20 @@ def run(question: str, on_step=print, out_dir: Path | None = None) -> tuple[str,
         msg = ollama.chat(model=MODEL, messages=messages, think=False).message
 
     report = re.sub(r"<think>.*?</think>", "", msg.content or "", flags=re.S).strip()
+    credit = f"Searched, read and written by {MODEL} on this PC."
+    if writer and r.sources:
+        on_step("  Writing the report…")
+        pages = "\n\n".join(f"[{i}] {t} - {u}\n{text}" for i, ((t, u), text) in enumerate(zip(r.sources, r.texts), 1))
+        written = writer([{"role": "system", "content": WRITER_SYSTEM},
+                          {"role": "user", "content": f"Question: {question}\n\nPages read:\n\n{pages}"}])
+        if written and written[0].strip():
+            report = written[0].strip()
+            credit = f"Pages found and read by {MODEL} on this PC. Report: {written[1]}"
+        elif written:
+            credit += f" {written[1]}"
+    on_step("  " + credit.splitlines()[0])
     # Always append the real reading list, so citations can be checked against what was read
-    report += "\n\n---\nPages actually read by the agent:\n" + "\n".join(
+    report += f"\n\n---\n**Who did the work:** {credit}\n\nPages actually read by the agent:\n" + "\n".join(
         f"[{i}] {t} - {u}" for i, (t, u) in enumerate(r.sources, 1))
     report_path = out_dir / f"{stamp}.md"
     report_path.write_text(f"# {question}\n\n{report}\n", encoding="utf-8")

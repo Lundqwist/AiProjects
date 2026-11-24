@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget, QLis
 
 import agent
 import check_report
+import wb_ai
 from wb_common import open_path, run_in_background
 from wb_settings import Settings
 
@@ -81,9 +82,19 @@ class ResearchTab(QWidget):
         self.check_label.setText("")
         self.steps.appendPlainText(f"Researching with {self.s.agent_model}…")
         out_dir = Path(self.s.reports_dir)
+        s = self.s
+
+        def writer(messages):
+            """A full report is a larger job: an online AI writes it while it has tokens."""
+            a = wb_ai.ask(s, messages, task="report", local_ok=False, temperature=0.2)
+            if a is None:
+                return None
+            if a.text:
+                return a.text, a.credit()
+            return "", "Online AI not used: " + "; ".join(a.notes)
 
         def work(emit):
-            _, path = agent.run(q, on_step=emit, out_dir=out_dir)
+            _, path = agent.run(q, on_step=emit, out_dir=out_dir, writer=writer)
             return path
 
         def done(path: Path):

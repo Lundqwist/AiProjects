@@ -10,9 +10,11 @@ import sounddevice as sd
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
-                               QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSlider, QSpinBox, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 import voice
+import wb_ai
 import wb_spotify
 import wb_voices
 from voice_library import VoiceLibrary
@@ -30,6 +32,13 @@ def _combo(items: list[str], current: str, editable: bool = True) -> QComboBox:
     return c
 
 
+def _muted(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("muted")
+    label.setWordWrap(True)
+    return label
+
+
 class SettingsTab(QWidget):
     saved = Signal()
     check_now = Signal()
@@ -42,6 +51,7 @@ class SettingsTab(QWidget):
         body = QWidget()
         lay = QVBoxLayout(body)
         lay.addWidget(self._ollama_group())
+        lay.addWidget(self._experts_group())
         lay.addWidget(self._folders_group())
         lay.addWidget(self._sound_group())
         lay.addWidget(self._tuning_group())
@@ -105,6 +115,108 @@ class SettingsTab(QWidget):
         hint.setWordWrap(True)
         f.addRow("", hint)
         return g
+
+    def _experts_group(self) -> QGroupBox:
+        g = QGroupBox("Experts and online AI")
+        f = QFormLayout(g)
+        self.code_model = _combo([], self.s.code_model)
+        self.reasoning_model = _combo([], self.s.reasoning_model)
+        self.writing_model = _combo([], self.s.writing_model)
+        f.addRow("Code expert", self.code_model)
+        f.addRow("Reasoning expert", self.reasoning_model)
+        f.addRow("Writing expert", self.writing_model)
+        f.addRow("", _muted("The general expert is the Documents model above. A missing model: ollama pull <name>."))
+        self.online_mode = QComboBox()
+        for key, text in (("off", "Off: everything stays on this PC"),
+                          ("big", "Larger jobs: research reports, long texts, or when ticked"),
+                          ("always", "Always: every question, while tokens last")):
+            self.online_mode.addItem(text, key)
+        self.online_min_chars = QSpinBox(minimum=500, maximum=200000, singleStep=1000)
+        self.online_min_chars.setSuffix(" characters")
+        self.online_for_documents = QCheckBox("Also send passages from my documents to online AI")
+        f.addRow("Use online AI", self.online_mode)
+        f.addRow("A larger job is over", self.online_min_chars)
+        f.addRow("", self.online_for_documents)
+
+        self.providers = QTableWidget(0, 7)
+        self.providers.setHorizontalHeaderLabels(["On", "Name", "Kind", "Address", "Model", "Key variable",
+                                                  "Monthly tokens (0 = no limit)"])
+        self.providers.horizontalHeader().setStretchLastSection(True)
+        self.providers.setMinimumHeight(120)
+        self.providers.verticalHeader().hide()
+        self.preset = QComboBox()
+        self.preset.addItems(list(wb_ai.PRESETS))
+        add = QPushButton("Add")
+        add.clicked.connect(lambda: self._add_provider({"name": self.preset.currentText().split(" (")[0],
+                                                         "kind": wb_ai.PRESETS[self.preset.currentText()][0],
+                                                         "base_url": wb_ai.PRESETS[self.preset.currentText()][1],
+                                                         "model": "", "key_env": "", "monthly_tokens": 0,
+                                                         "enabled": True}))
+        remove = QPushButton("Remove selected")
+        remove.clicked.connect(lambda: self.providers.removeRow(self.providers.currentRow()))
+        up = QPushButton("Move up")
+        up.clicked.connect(self._move_up)
+        reset = QPushButton("Try again (bought more credit / new key)")
+        reset.clicked.connect(self._reset_providers)
+        btns = QHBoxLayout()
+        for w in (self.preset, add, remove, up, reset):
+            btns.addWidget(w)
+        btns.addStretch()
+        f.addRow("Online AIs", self.providers)
+        f.addRow("", btns)
+        self.provider_status = _muted("")
+        self.provider_status.setTextFormat(Qt.RichText)
+        f.addRow("", self.provider_status)
+        f.addRow("", _muted("Tried from the top. Each is used until it runs out of tokens, hits its monthly limit "
+                            "(0 = no own limit) or rejects its key; then the next one, and at last this PC. "
+                            "Keys are read from the named user environment variable, never saved here."))
+        return g
+
+    def _add_provider(self, p: dict):
+        r = self.providers.rowCount()
+        self.providers.insertRow(r)
+        on = QTableWidgetItem()
+        on.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        on.setCheckState(Qt.Checked if p.get("enabled", True) else Qt.Unchecked)
+        self.providers.setItem(r, 0, on)
+        for c, k in enumerate(("name", "kind", "base_url", "model", "key_env", "monthly_tokens"), 1):
+            self.providers.setItem(r, c, QTableWidgetItem(str(p.get(k, "") or (0 if k == "monthly_tokens" else ""))))
+
+    def _move_up(self):
+        r = self.providers.currentRow()
+        if r > 0:
+            rows = self._provider_rows()
+            rows[r - 1], rows[r] = rows[r], rows[r - 1]
+            self._fill_providers(rows)
+            self.providers.setCurrentCell(r - 1, 1)
+
+    def _provider_rows(self) -> list[dict]:
+        rows = []
+        for r in range(self.providers.rowCount()):
+            cell = lambda c: (self.providers.item(r, c).text().strip() if self.providers.item(r, c) else "")  # noqa: E731
+            if not cell(1):
+                continue
+            rows.append({"name": cell(1), "kind": cell(2) if cell(2) in ("anthropic", "openai") else "openai",
+                         "base_url": cell(3), "model": cell(4), "key_env": cell(5),
+                         "monthly_tokens": int(cell(6)) if cell(6).isdigit() else 0,
+                         "enabled": self.providers.item(r, 0).checkState() == Qt.Checked})
+        return rows
+
+    def _fill_providers(self, rows: list[dict]):
+        self.providers.setRowCount(0)
+        for p in rows:
+            self._add_provider(p)
+        self.providers.resizeColumnsToContents()
+        lines = []
+        for p in rows:
+            ok, state = wb_ai.provider_state(p)
+            lines.append(f"<span style='color:{'#9be59b' if ok else '#ff8a80'}'>●</span> {p['name']}: {state}")
+        self.provider_status.setText("<br>".join(lines))
+
+    def _reset_providers(self):
+        for p in self._provider_rows():
+            wb_ai.reset_provider(p["name"])
+        self._fill_providers(self._provider_rows())
 
     def _folders_group(self) -> QGroupBox:
         g = QGroupBox("Folders")
@@ -352,8 +464,14 @@ class SettingsTab(QWidget):
         s = self.s
         for combo, value in ((self.chat_model, s.chat_model), (self.vision_model, s.vision_model),
                              (self.embed_model, s.embed_model), (self.agent_model, s.agent_model),
+                             (self.code_model, s.code_model), (self.reasoning_model, s.reasoning_model),
+                             (self.writing_model, s.writing_model),
                              (self.whisper_size, s.whisper_size), (self.whisper_device, s.whisper_device)):
             combo.setCurrentText(value)
+        self.online_mode.setCurrentIndex(max(0, self.online_mode.findData(s.online_mode)))
+        self.online_min_chars.setValue(s.online_min_chars)
+        self.online_for_documents.setChecked(s.online_for_documents)
+        self._fill_providers(list(s.online_providers or []))
         self._fill_voices(s.voice_en, s.voice_sv)
         self.check_updates.setChecked(s.check_updates_at_start)
         self.host.setText(s.ollama_host)
@@ -389,6 +507,13 @@ class SettingsTab(QWidget):
         s.vision_model = self.vision_model.currentText().strip()
         s.embed_model = self.embed_model.currentText().strip()
         s.agent_model = self.agent_model.currentText().strip()
+        s.code_model = self.code_model.currentText().strip()
+        s.reasoning_model = self.reasoning_model.currentText().strip()
+        s.writing_model = self.writing_model.currentText().strip()
+        s.online_mode = self.online_mode.currentData()
+        s.online_min_chars = self.online_min_chars.value()
+        s.online_for_documents = self.online_for_documents.isChecked()
+        s.online_providers = self._provider_rows()
         s.rag_db, s.invoice_inbox = self.rag_db.text(), self.invoice_inbox.text()
         s.invoice_output, s.reports_dir = self.invoice_output.text(), self.reports_dir.text()
         s.voices_dir, s.eval_dir = self.voices_dir.text(), self.eval_dir.text()
@@ -421,6 +546,7 @@ class SettingsTab(QWidget):
         except OSError as e:
             QMessageBox.warning(self, "Settings", f"Could not save: {e}")
             return
+        self._fill_providers(s.online_providers)
         self.saved_label.setText(f"Saved {time.strftime('%H:%M:%S')}")
         self.saved.emit()
 
@@ -430,7 +556,8 @@ class SettingsTab(QWidget):
             return sorted(m.model for m in ollama.list().models)
 
         def show(models):
-            for combo in (self.chat_model, self.vision_model, self.embed_model, self.agent_model):
+            for combo in (self.chat_model, self.vision_model, self.embed_model, self.agent_model,
+                          self.code_model, self.reasoning_model, self.writing_model):
                 current = combo.currentText()
                 combo.clear()
                 combo.addItems(models)
