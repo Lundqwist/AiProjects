@@ -32,8 +32,10 @@ Re-ingesting a file replaces its old chunks. To start over, delete the `db` fold
 
 - **Still wrong sometimes.** Asked which devices may read a dashboard feed, it named the right TV but added "the Pi" (the feed runs *on* the Pi; the other allowed client is a PC). The source chunk was right; the 12B model blurred "runs on" and "may read". This is what project 05 should catch.
 
+- **Found by project 05's tests** (80 % → 100 %): questions in Swedish found nothing because `nomic-embed-text` is English-only, so non-English questions are now also searched as an English translation. Each chunk carries its document's title, so an "(old, 2024)" FAQ loses to the current handbook. The prompt asks for complete answers, including conditions and limits.
+
 ## Next
 
 - Hybrid search (BM25 + vectors) for exact names and numbers.
 - Reranking the top 20 down to 5.
-- An evaluation set for project 05.
+- A multilingual embedding model (e.g. `bge-m3`) instead of translating queries.

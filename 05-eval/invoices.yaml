@@ -1,0 +1,32 @@
+# Evaluates 03-invoices on made-up invoices. Run: promptfoo eval -c invoices.yaml
+description: Invoice extraction - are the numbers exactly right?
+
+prompts:
+  - "{{file}}"
+
+providers:
+  - id: file://providers.py:call_invoice
+    label: invoices + gemma3:12b
+    config: { model: "gemma3:12b", pythonExecutable: ../.venv/Scripts/python.exe }
+
+defaultTest:
+  assert:
+    - { type: is-json }
+
+tests:
+  - vars: { file: F-10231.pdf }
+    assert:
+      - { type: javascript, value: "(j => j.total === 1071.25 && j.vat_rate === 25 && j.invoice_number === 'F-10231' && j.problems.length === 0)(JSON.parse(output))" }
+  - vars: { file: 2026-117.pdf }
+    assert:
+      - { type: javascript, value: "(j => j.total === 8737.5 && j.lines.length === 2 && j.due_date === '2026-11-14' && j.problems.length === 0)(JSON.parse(output))" }
+  - vars: { file: INV-5542.pdf }
+    assert:
+      - { type: javascript, value: "(j => Math.abs(j.total - 1512.62) < 0.01 && j.vat_rate === 6 && j.problems.length === 0)(JSON.parse(output))" }
+  - vars: { file: K-0981.pdf }
+    assert:
+      - { type: javascript, value: "(j => Math.abs(j.total - 1433.6) < 0.01 && j.vat_rate === 12 && j.supplier.includes('Kaffekvarnen'))(JSON.parse(output))" }
+  # The deliberately wrong invoice: the checks must flag it
+  - vars: { file: GS-3310.pdf }
+    assert:
+      - { type: javascript, value: "(j => j.problems.some(p => p.includes('total')))(JSON.parse(output))" }

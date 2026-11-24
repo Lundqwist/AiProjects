@@ -2,5 +2,14 @@
 .python/
 .uv-cache/
 __pycache__/
-db/
 *.pyc
+
+# Databases, downloads and generated test output
+db/
+.eval-db/
+02-voice/voices/
+02-voice/test-audio/
+03-invoices/inbox/
+03-invoices/output/
+04-research/reports/
+05-eval/fixtures/invoices/
