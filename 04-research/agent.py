@@ -64,10 +64,11 @@ class Research:
         return f"Source [{n}]: {title}\n\n{text[:PAGE_CHARS]}"
 
 
-def run(question: str) -> tuple[str, Path]:
+def run(question: str, on_step=print, out_dir: Path | None = None) -> tuple[str, Path]:
+    """Research a question. on_step gets a line per tool call; reports go to out_dir."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_dir = HERE / "reports"
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(out_dir or HERE / "reports")
+    out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / f"{stamp}.log.jsonl"
     log = log_path.open("w", encoding="utf-8")
     r = Research(log)
@@ -88,7 +89,7 @@ def run(question: str) -> tuple[str, Path]:
             break
         for call in msg.tool_calls:
             name, args = call.function.name, call.function.arguments
-            print(f"  [{round_no}] {name}({', '.join(f'{v}' for v in args.values())})", flush=True)
+            on_step(f"  [{round_no}] {name}({', '.join(f'{v}' for v in args.values())})")
             try:
                 result = tools[name](**args) if name in tools else f"Unknown tool {name}"
             except Exception as e:
@@ -99,6 +100,7 @@ def run(question: str) -> tuple[str, Path]:
             messages.append({"role": "tool", "content": result, "tool_name": name})
     else:
         messages.append({"role": "user", "content": "Stop researching. Write the final report now from what you read."})
+        on_step("  Round limit reached: writing the report from what was read")
         msg = ollama.chat(model=MODEL, messages=messages, think=False).message
 
     report = re.sub(r"<think>.*?</think>", "", msg.content or "", flags=re.S).strip()
@@ -116,6 +118,6 @@ if __name__ == "__main__":
         print(__doc__)
         sys.exit(1)
     start = time.time()
-    report, path = run(" ".join(sys.argv[1:]))
+    report, path = run(" ".join(sys.argv[1:]), on_step=lambda s: print(s, flush=True))
     print("\n" + report)
     print(f"\nSaved to {path} ({time.time() - start:.0f}s)")

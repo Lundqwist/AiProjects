@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,9 +45,18 @@ class Hit:
         return f"{self.source}, {where}" if where else self.source
 
 
+_clients: dict[str, chromadb.ClientAPI] = {}
+_clients_lock = threading.Lock()
+
+
 def collection():
-    client = chromadb.PersistentClient(path=str(DB_DIR))
-    return client.get_or_create_collection(COLLECTION, metadata={"hnsw:space": "cosine"})
+    # One client per database folder, created under a lock: ChromaDB fails with a KeyError
+    # when two threads create a client for the same folder at the same time.
+    with _clients_lock:
+        key = str(DB_DIR)
+        if key not in _clients:
+            _clients[key] = chromadb.PersistentClient(path=key)
+        return _clients[key].get_or_create_collection(COLLECTION, metadata={"hnsw:space": "cosine"})
 
 
 def read_pages(path: Path) -> list[tuple[int, str, str]]:
@@ -118,6 +128,18 @@ def embed(texts: list[str], kind: str) -> list[list[float]]:
     return ollama.embed(model=EMBED_MODEL, input=[prefix + t for t in texts]).embeddings
 
 
+def list_sources() -> dict[str, int]:
+    """Every ingested file and how many chunks it has."""
+    counts: dict[str, int] = {}
+    for meta in collection().get(include=["metadatas"])["metadatas"]:
+        counts[meta["source"]] = counts.get(meta["source"], 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def delete_source(source: str) -> None:
+    collection().delete(where={"source": source})
+
+
 def ingest_file(path: Path, root: Path) -> int:
     col = collection()
     source = str(path.relative_to(root)) if path.is_relative_to(root) else path.name
@@ -173,12 +195,13 @@ def build_messages(question: str, hits: list[Hit]) -> list[dict]:
     ]
 
 
-def answer_stream(question: str, hits: list[Hit], model: str = CHAT_MODEL):
+def answer_stream(question: str, hits: list[Hit], model: str | None = None, temperature: float = 0.2):
     """Yield the answer text piece by piece."""
+    model = model or CHAT_MODEL
     if not hits:
         yield "Not in the documents. (The database is empty: run ingest.py first.)"
         return
     extra = {"think": False} if model.startswith("qwen3") else {}
     for part in ollama.chat(model=model, messages=build_messages(question, hits),
-                            stream=True, options={"temperature": 0.2}, **extra):
+                            stream=True, options={"temperature": temperature}, **extra):
         yield part.message.content

@@ -23,7 +23,7 @@ import ollama
 import sounddevice as sd
 import soundfile as sf
 from faster_whisper import WhisperModel
-from piper import PiperVoice
+from piper import PiperVoice, SynthesisConfig
 
 HERE = Path(__file__).parent
 CHAT_MODEL = "qwen3:8b"  # supports tool calls, and is fast enough for conversation
@@ -36,12 +36,24 @@ answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbol
 Reply in the same language as the user."""
 
 
-def load_whisper() -> WhisperModel:
-    try:
-        return WhisperModel(WHISPER_SIZE, device="cuda", compute_type="float16")
-    except Exception as e:  # missing CUDA/cuDNN DLLs: fall back to CPU
-        print(f"(GPU not available for Whisper: {e}; using CPU)")
-        return WhisperModel(WHISPER_SIZE, device="cpu", compute_type="int8")
+def load_whisper(size: str = WHISPER_SIZE, device: str = "auto") -> WhisperModel:
+    """device: 'auto' (GPU if it works, else CPU), 'cuda' or 'cpu'."""
+    if device in ("auto", "cuda"):
+        try:
+            return WhisperModel(size, device="cuda", compute_type="float16")
+        except Exception as e:  # missing CUDA/cuDNN DLLs: fall back to CPU
+            print(f"(GPU not available for Whisper: {e}; using CPU)")
+    return WhisperModel(size, device="cpu", compute_type="int8")
+
+
+def mme_devices(kind: str) -> list[tuple[int, str]]:
+    """Input or output devices on Windows' MME host API, which resamples for us
+    (WASAPI would refuse 16 kHz recording on a 48 kHz microphone)."""
+    apis = sd.query_hostapis()
+    mme = next((i for i, a in enumerate(apis) if a["name"] == "MME"), 0)
+    key = "max_input_channels" if kind == "input" else "max_output_channels"
+    return [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+            if d["hostapi"] == mme and d[key] > 0]
 
 
 def load_wav(path: str) -> np.ndarray:
@@ -78,12 +90,22 @@ TOOLS = {"open_tasks": open_tasks}
 
 
 class Assistant:
-    def __init__(self):
+    def __init__(self, chat_model: str = CHAT_MODEL, whisper_size: str = WHISPER_SIZE,
+                 whisper_device: str = "auto", voices: dict[str, str] | None = None,
+                 voices_dir: Path = HERE / "voices", speed: float = 1.0, volume: float = 1.0,
+                 output_device: int | None = None):
         t = time.time()
-        self.whisper = load_whisper()
-        self.voices = {lang: PiperVoice.load(HERE / "voices" / f"{name}.onnx") for lang, name in VOICES.items()}
+        self.chat_model = chat_model
+        self.whisper_size = whisper_size
+        self.whisper = load_whisper(whisper_size, whisper_device)
+        self.voices = {lang: PiperVoice.load(Path(voices_dir) / f"{name}.onnx")
+                       for lang, name in (voices or VOICES).items()}
+        self.speed, self.volume, self.output_device = speed, volume, output_device
         self.history = [{"role": "system", "content": SYSTEM}]
         print(f"Ready ({time.time() - t:.1f}s to load)")
+
+    def reset(self) -> None:
+        self.history = self.history[:1]
 
     def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
         try:
@@ -94,15 +116,17 @@ class Assistant:
             if "cublas" not in str(e).lower() and "cudnn" not in str(e).lower():
                 raise
             print("(CUDA libraries missing for Whisper; switching to CPU. See README to enable the GPU.)")
-            self.whisper = WhisperModel(WHISPER_SIZE, device="cpu", compute_type="int8")
+            self.whisper = WhisperModel(self.whisper_size, device="cpu", compute_type="int8")
             return self.transcribe(audio)
         lang = info.language if info.language in self.voices else "en"
         return text, lang
 
-    def reply(self, text: str) -> str:
-        self.history.append({"role": "user", "content": text})
+    def reply(self, text: str, lang: str | None = None) -> str:
+        # Name the language each turn: otherwise the model keeps the conversation's earlier language
+        hint = {"sv": "\n\n(Svara på svenska.)", "en": "\n\n(Reply in English.)"}.get(lang or "", "")
+        self.history.append({"role": "user", "content": text + hint})
         for _ in range(3):  # allow a tool call or two before the spoken answer
-            msg = ollama.chat(model=CHAT_MODEL, messages=self.history, tools=list(TOOLS.values()),
+            msg = ollama.chat(model=self.chat_model, messages=self.history, tools=list(TOOLS.values()),
                               think=False, options={"temperature": 0.5}).message
             self.history.append(msg)
             if not msg.tool_calls:
@@ -116,16 +140,20 @@ class Assistant:
                 self.history.append({"role": "tool", "content": result, "tool_name": call.function.name})
         return "Sorry, I got stuck."
 
+    def synth(self, text: str, lang: str) -> tuple[np.ndarray, int]:
+        """Text to int16 audio. speed > 1 talks faster (Piper's length_scale is its inverse)."""
+        voice = self.voices.get(lang) or next(iter(self.voices.values()))
+        cfg = SynthesisConfig(length_scale=1.0 / max(self.speed, 0.1), volume=self.volume)
+        chunks = list(voice.synthesize(text, syn_config=cfg))
+        return np.concatenate([c.audio_int16_array for c in chunks]), chunks[0].sample_rate
+
     def speak(self, text: str, lang: str, out: Path | None = None) -> None:
-        voice = self.voices[lang]
-        chunks = list(voice.synthesize(text))
-        audio = np.concatenate([c.audio_int16_array for c in chunks])
-        rate = chunks[0].sample_rate
+        audio, rate = self.synth(text, lang)
         if out:
             with wave.open(str(out), "wb") as w:
                 w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(audio.tobytes())
         else:
-            sd.play(audio, rate)
+            sd.play(audio, rate, device=self.output_device)
             sd.wait()
 
     def turn(self, audio, out: Path | None = None) -> None:
@@ -136,7 +164,7 @@ class Assistant:
             return
         t1 = time.time()
         print(f"You ({lang}): {text}")
-        answer = self.reply(text)
+        answer = self.reply(text, lang)
         t2 = time.time()
         print(f"Assistant: {answer}")
         self.speak(answer, lang, out)
