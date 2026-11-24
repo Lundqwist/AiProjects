@@ -19,6 +19,14 @@ from wb_settings import Settings
 RATE = 16000
 
 
+def stop_sound() -> None:
+    "Stop any playing sound. sounddevice raises if the last sound's stream is already gone."
+    try:
+        sd.stop()
+    except sd.PortAudioError:
+        pass
+
+
 class VoiceTab(QWidget):
     def __init__(self, settings: Settings, status):
         super().__init__()
@@ -51,7 +59,7 @@ class VoiceTab(QWidget):
         self.state.setObjectName("muted")
 
         stop = QPushButton("Stop speaking")
-        stop.clicked.connect(sd.stop)
+        stop.clicked.connect(stop_sound)
         new = QPushButton("New conversation")
         new.clicked.connect(self.new_conversation)
         buttons = QHBoxLayout()
@@ -210,7 +218,7 @@ class VoiceTab(QWidget):
             self.start_recording()
 
     def start_recording(self):
-        sd.stop()  # don't record the assistant talking
+        stop_sound()  # don't record the assistant talking
         if self.wake:
             self.wake.pause()  # the button is in charge now
         self.frames = []
@@ -309,7 +317,7 @@ class VoiceTab(QWidget):
                           on_done=self._resume_wake, pool=self.pool)
 
     def new_conversation(self):
-        sd.stop()
+        stop_sound()
         if self.bot:
             self.bot.reset()
         self.turns.clear()
@@ -334,7 +342,7 @@ class VoiceTab(QWidget):
             self.wake.stop()
         if self.stream:
             self.stream.close()
-        sd.stop()
+        stop_sound()
 
 
 class _WakeSignals(QObject):
