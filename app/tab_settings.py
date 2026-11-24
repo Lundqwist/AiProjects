@@ -138,6 +138,10 @@ class SettingsTab(QWidget):
         self.volume.valueChanged.connect(lambda v: self.volume_label.setText(f"{v} %"))
         self.speak_replies = QCheckBox("Speak replies out loud")
         self.push_to_talk = QCheckBox("Push to talk (hold the button); off = click to start and stop")
+        self.wake_word = QLineEdit()
+        self.wake_word.setPlaceholderText("e.g. Hey Luna")
+        self.wake_at_start = QCheckBox("Listen for the wake word when the program starts")
+        self.wake_chime = QCheckBox("Play a chime when the wake word is heard")
 
         self.meter = QProgressBar(maximum=100, textVisible=False)
         self.meter.setFixedHeight(10)
@@ -165,6 +169,14 @@ class SettingsTab(QWidget):
         f.addRow("Voice volume", self._with_label(self.volume, self.volume_label))
         f.addRow("", self.speak_replies)
         f.addRow("", self.push_to_talk)
+        f.addRow("Wake word", self.wake_word)
+        f.addRow("", self.wake_at_start)
+        f.addRow("", self.wake_chime)
+        wake_hint = QLabel("Any word or phrase. Two words, or one that's rare in speech and on TV, "
+                           "trigger by mistake less often. Everything is heard and recognized on this PC only.")
+        wake_hint.setObjectName("muted")
+        wake_hint.setWordWrap(True)
+        f.addRow("", wake_hint)
         return g
 
     def _tuning_group(self) -> QGroupBox:
@@ -286,6 +298,9 @@ class SettingsTab(QWidget):
         self.volume.setValue(int(s.speech_volume * 100))
         self.speak_replies.setChecked(s.speak_replies)
         self.push_to_talk.setChecked(s.push_to_talk)
+        self.wake_word.setText(s.wake_word)
+        self.wake_at_start.setChecked(s.wake_at_start)
+        self.wake_chime.setChecked(s.wake_chime)
         self.top_k.setValue(s.top_k)
         self.temperature.setValue(s.temperature)
         self.max_rounds.setValue(s.max_rounds)
@@ -317,6 +332,9 @@ class SettingsTab(QWidget):
         s.speech_volume = self.volume.value() / 100
         s.speak_replies = self.speak_replies.isChecked()
         s.push_to_talk = self.push_to_talk.isChecked()
+        s.wake_word = self.wake_word.text().strip() or "Hey Luna"
+        s.wake_at_start = self.wake_at_start.isChecked()
+        s.wake_chime = self.wake_chime.isChecked()
         s.top_k, s.temperature = self.top_k.value(), self.temperature.value()
         s.max_rounds, s.min_pages = self.max_rounds.value(), self.min_pages.value()
         s.page_chars = self.page_chars.value()

@@ -73,6 +73,9 @@ class Settings:
     speech_volume: float = 1.0
     speak_replies: bool = True
     push_to_talk: bool = True         # hold the button; off = click to start, click to stop
+    wake_word: str = "Hey Luna"       # any word or phrase; two words trigger by mistake less often
+    wake_at_start: bool = False       # start listening for the wake word when the program opens
+    wake_chime: bool = True           # play a chime when the wake word is heard
 
     # Integrations
     vikunja_url: str = "http://localhost:3456"

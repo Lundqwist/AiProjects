@@ -135,6 +135,40 @@ record("voice: typed English after Swedish gets English", ok and "hej" not in re
 audio, rate = vt.bot.synth("Testing the voice.", "en")
 record("voice: speech synthesis", len(audio) > rate * 0.5, f"{len(audio) / rate:.1f}s at {rate} Hz, speed 1.25")
 
+# Wake word: spoken audio fed in real time as if from the microphone
+import numpy as np  # noqa: E402
+
+s.wake_chime = False
+vt.wake_uses_microphone = False
+vt.wake_btn.setChecked(True)
+wait(lambda: vt.wake is not None, 60)
+
+
+def to16k(a, r):
+    n = int(len(a) * 16000 / r)
+    return np.interp(np.linspace(0, len(a) - 1, n), np.arange(len(a)), a.astype("float32") / 32768).astype("float32")
+
+
+def feed(a):
+    a = np.concatenate([np.zeros(12800, "float32"), a, np.zeros(24000, "float32")])
+    a = a + np.random.default_rng(0).normal(0, 0.004, len(a)).astype("float32")
+    for i in range(0, len(a), 1600):
+        vt.wake.feed(a[i:i + 1600])
+        wait(lambda: False, 0.1)
+
+
+before = len(vt.turns)
+feed(to16k(*vt.bot.synth("Hey Luna, what is the capital of Norway?", "en")))
+ok = wait(lambda: len(vt.turns) >= before + 2 and not vt.wake.paused, 120)
+new = vt.turns[before:]
+record("wake word: 'Hey Luna, what is the capital of Norway?'",
+       ok and "luna" not in new[0][1].lower() and "oslo" in new[1][1].lower(), f"{[t[1] for t in new]}")
+before = len(vt.turns)
+feed(to16k(*vt.bot.synth("The weather tomorrow will be cloudy with some rain.", "en")))
+wait(lambda: False, 6)
+record("wake word: ignores speech without it", len(vt.turns) == before, vt.heard_label.text()[:80])
+vt.wake_btn.setChecked(False)
+
 # 5. Research (uses the web)
 if "--skip-research" not in sys.argv:
     from tab_research import ResearchTab  # noqa: E402

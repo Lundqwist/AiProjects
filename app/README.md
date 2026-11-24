@@ -14,6 +14,22 @@ One Windows program for the five projects: settings in one place, file handling 
 | **Evaluation** | Run the RAG or invoice test suite, failures first with the reason, open promptfoo's web viewer |
 | **Settings** | Models per task (filled from Ollama), folders, microphone and speakers, speech model and device, voices (with Listen and a voice library), speed and volume, push-to-talk, answer/research tuning, Vikunja, promptfoo, updates |
 
+## Wake word
+
+Voice tab → *Listen for "Hey Luna"* (or Settings → *Listen for the wake word when the program starts*). Then just talk: "Hey Luna, put CNN on", or "Hey Luna" and, after the chime, the question. Pick your own word or phrase in Settings.
+
+How `wb_wake.py` does it, all on this PC:
+
+1. A level detector that adapts to the room splits the microphone into bursts of speech; silence costs nothing.
+2. Each burst goes through Whisper *tiny* on the CPU, about 0.4 s for 2 s of speech, with the wake word as a hotword.
+3. A fuzzy match that goes word by word finds the wake word. It accepts "Lona" and "Hej Luna" for "Hey Luna", and rejects "lunar" and "the lunar module, hey there". It's tuned with a table of cases, including English and Swedish greetings.
+4. The command's **audio** goes to the Voice tab, which transcribes it with the better model and removes the wake word. Tiny is good enough to spot a word but not for Swedish sentences: it heard "sätt på CNN på tv:n" as "Sett på scenen på TVN".
+5. While the assistant thinks and speaks, the listener pauses, so it doesn't hear itself. Speech from that time is thrown away.
+
+**Tested** with spoken audio from Piper fed in real time with background noise: English and Swedish in one breath, the wake word followed by a short pause, speech without the wake word (ignored), "lunar eclipse" (ignored), and the wake word spoken over news-style talk. The self-test runs two of these cases every time.
+
+**Limits:** it can't tell your voice from the TV's. Spoken over a talking TV, the wake word is found and the TV talk before it is removed, but TV talk right after your question can slip into it. Pause or mute the TV, or sit closer to the microphone than the TV is. Every word said near the microphone is transcribed locally, and the last thing heard is shown on the Voice tab; nothing is saved or sent anywhere.
+
 ## TV
 
 `wb_tv.py` talks to Samsung Tizen TVs (2016 and later) on the local network: their REST API on port 8001 for finding the TV and its power state, Wake-on-LAN to turn it on, and the remote-control websocket on port 8002 for buttons and apps. Nothing about the TV is in the code: *Find TV* scans the local network and stores the TV's address and MAC in the settings.
