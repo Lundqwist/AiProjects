@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPro
 
 import voice
 import wb_access
+import wb_spotify
+import wb_spotify_tools
 import wb_tv_tools
 import wb_wake
 from wb_common import run_in_background
@@ -264,6 +266,8 @@ class VoiceTab(QWidget):
         elif self.wake:
             self.wake.idle_limit = self.s.conversation_idle
         tv = " Say \"turn on CNN\" or \"turn the volume down\" to run the TV." if self.s.tv_ip else ""
+        if wb_spotify.connected():
+            tv += " Say \"play country music\" or \"next song\" for Spotify."
         self.hint.setText("Speak English or Swedish; the reply comes in the same language. "
                           f"Ask \"what's on my to-do list?\" to hear your Vikunja tasks.{tv} "
                           f"Model: {self.s.agent_model} · speech recognition: Whisper {self.s.whisper_size}")
@@ -271,12 +275,15 @@ class VoiceTab(QWidget):
     def _sync_tools(self):
         """TV tools are offered to the model only when a TV is set up (Find TV can happen any time)."""
         wb_tv_tools.configure(self.s)
+        wb_spotify_tools.configure(self.s)
         voice.TOOLS.update(wb_access.TOOLS)  # programs, status, tasks, containers, media (wb_access)
-        if self.s.tv_ip:
-            voice.TOOLS.update(wb_tv_tools.TOOLS)
-        else:
-            for name in wb_tv_tools.TOOLS:
-                voice.TOOLS.pop(name, None)
+        for tools, on in ((wb_tv_tools.TOOLS, bool(self.s.tv_ip)),
+                          (wb_spotify_tools.TOOLS, wb_spotify.connected())):
+            if on:
+                voice.TOOLS.update(tools)
+            else:
+                for name in tools:
+                    voice.TOOLS.pop(name, None)
 
     def _ensure_bot(self, emit):
         self._sync_tools()

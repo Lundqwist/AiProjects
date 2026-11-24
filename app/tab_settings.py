@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout
                                QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget)
 
 import voice
+import wb_spotify
 import wb_voices
 from voice_library import VoiceLibrary
 from wb_common import PathPicker, open_path, run_in_background
@@ -45,6 +46,7 @@ class SettingsTab(QWidget):
         lay.addWidget(self._sound_group())
         lay.addWidget(self._tuning_group())
         lay.addWidget(self._integrations_group())
+        lay.addWidget(self._spotify_group())
         lay.addStretch()
 
         scroll = QScrollArea()
@@ -220,6 +222,69 @@ class SettingsTab(QWidget):
         f.addRow("Updates", row)
         return g
 
+    def _spotify_group(self) -> QGroupBox:
+        g = QGroupBox("Spotify")
+        f = QFormLayout(g)
+        self.spotify_client_id = QLineEdit()
+        self.spotify_client_id.setPlaceholderText("Client ID of your app at developer.spotify.com")
+        self.spotify_device = QLineEdit()
+        self.spotify_device.setPlaceholderText("empty = this PC")
+        self.spotify_ask_first = QCheckBox("Ask on screen before the assistant plays or changes music")
+        self.spotify_status = QLabel("")
+        self.spotify_status.setObjectName("muted")
+        self.spotify_connect = QPushButton("Connect…")
+        self.spotify_connect.clicked.connect(self.connect_spotify)
+        self.spotify_disconnect = QPushButton("Disconnect")
+        self.spotify_disconnect.clicked.connect(self.disconnect_spotify)
+        row = QHBoxLayout()
+        row.addWidget(self.spotify_connect)
+        row.addWidget(self.spotify_disconnect)
+        row.addWidget(self.spotify_status, 1)
+        f.addRow("Client ID", self.spotify_client_id)
+        f.addRow("Preferred device", self.spotify_device)
+        f.addRow("", self.spotify_ask_first)
+        f.addRow("", row)
+        hint = QLabel(f"Create an app at developer.spotify.com (Web API), add the redirect URI "
+                      f"<b>{wb_spotify.REDIRECT_URI}</b>, paste its Client ID here and press Connect. "
+                      "Your browser asks you to allow access once. Playback control needs Spotify Premium. "
+                      "No secret is needed; the sign-in is kept in the settings folder.")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        f.addRow("", hint)
+        self._show_spotify()
+        return g
+
+    def _show_spotify(self, text: str = ""):
+        on = wb_spotify.connected()
+        self.spotify_disconnect.setEnabled(on)
+        self.spotify_status.setText(text or ("Connected" if on else "Not connected"))
+
+    def connect_spotify(self):
+        client_id = self.spotify_client_id.text().strip()
+        if not client_id:
+            self._show_spotify("Enter the Client ID first")
+            return
+        self.s.spotify_client_id = client_id
+        self.s.save()
+        self.spotify_connect.setEnabled(False)
+        self._show_spotify("Waiting for you to allow access in the browser…")
+
+        def done(who):
+            self.spotify_connect.setEnabled(True)
+            self._show_spotify(f"Connected as {who}")
+            self.saved.emit()  # the voice tab offers the Spotify tools now
+
+        def failed(e):
+            self.spotify_connect.setEnabled(True)
+            self._show_spotify(f"Not connected: {e}")
+
+        run_in_background(lambda emit: wb_spotify.sign_in(client_id), on_result=done, on_error=failed)
+
+    def disconnect_spotify(self):
+        wb_spotify.disconnect()
+        self._show_spotify()
+        self.saved.emit()
+
     def _voice_row(self, combo: QComboBox, lang: str) -> QWidget:
         listen = QPushButton("Listen")
         listen.clicked.connect(lambda: self._preview(combo.currentData()))
@@ -311,6 +376,9 @@ class SettingsTab(QWidget):
         self.vikunja_url.setText(s.vikunja_url)
         self.vikunja_token_env.setText(s.vikunja_token_env)
         self.promptfoo_path.setText(s.promptfoo_path)
+        self.spotify_client_id.setText(s.spotify_client_id)
+        self.spotify_device.setText(s.spotify_device)
+        self.spotify_ask_first.setChecked(s.spotify_ask_first)
         self._fill_devices()
         self.saved_label.setText("")
 
@@ -343,6 +411,9 @@ class SettingsTab(QWidget):
         s.vikunja_url = self.vikunja_url.text().strip()
         s.vikunja_token_env = self.vikunja_token_env.text().strip()
         s.promptfoo_path = self.promptfoo_path.text().strip()
+        s.spotify_client_id = self.spotify_client_id.text().strip()
+        s.spotify_device = self.spotify_device.text().strip()
+        s.spotify_ask_first = self.spotify_ask_first.isChecked()
         try:
             s.ensure_folders()
             s.save()

@@ -21,7 +21,7 @@ One Windows program for the five projects: settings in one place, file handling 
 | Level | Tools | How |
 |---|---|---|
 | **Free** | open a program on the allowed list, check whether services are up (a TCP connection to each), read tasks, the TV | at once |
-| **Asks first** | open any other Start-menu program (*Allow once* / *Always allow* / *Don't allow*), add or finish a Vikunja task, restart a container from the allowed list (over ssh), media keys | a question on screen with a chime and a flashing taskbar button; only a click answers it, never a voice, so a TV or a visitor can't say yes; no answer in 90 s is a no |
+| **Asks first** | open any other Start-menu program (*Allow once* / *Always allow* / *Don't allow*), add or finish a Vikunja task, restart a container from the allowed list (over ssh), media keys, Spotify play/pause/skip/volume (until *Always allow*; "what's playing" never asks) | a question on screen with a chime and a flashing taskbar button; only a click answers it, never a voice, so a TV or a visitor can't say yes; no answer in 90 s is a no |
 | **Never** | delete files, send messages, payments, system settings | no tool exists. Programs that could do them (PowerShell, Terminal, Command Prompt, Registry Editor, Control Panel, Settings, WSL, uninstallers, security tools) are refused even with permission |
 
 Programs come from the Start menu (`Get-StartApps`) and open the way a click there does (`explorer shell:AppsFolder\<AppID>`), so desktop and Store apps both work. `wb_permission.py` carries a tool's question from its worker thread to the window and back.
@@ -63,6 +63,14 @@ How `wb_wake.py` does it, all on this PC:
 - **On the TV, once:** turn on Settings → General → Network → Expert Settings → *Power On with Mobile*, or Wake-on-LAN does nothing. The first command shows an *Allow* question for "AI Workbench"; the pairing token is kept in `%APPDATA%\AI Workbench\tv-token`.
 - **Voice:** when a TV is set up, the voice assistant gets four tools (`wb_tv_tools.py`): `tv_power`, `tv_watch` (a favourite, an app or a channel number), `tv_volume` and `tv_status`. "Put CNN on the TV", "turn the volume down two steps" and "Höj volymen på tv:n två steg" each picked the right tool in testing.
 - **Limits:** the TV can't say what's on screen, only whether it's on. It answers only the app list it was built with; other apps can be opened by their app id (`sdb shell 0 applist` lists them in Developer Mode).
+
+## Spotify
+
+`wb_spotify.py` uses Spotify's Web API with an Authorization Code + PKCE sign-in, so only a Client ID is needed, never a client secret.
+
+- **Once:** create an app at developer.spotify.com (Web API), add the redirect URI `http://127.0.0.1:8888/callback`, paste its Client ID in Settings → Spotify and press *Connect*. The browser asks you to allow access; the refresh token is kept in `%APPDATA%\AI Workbench\spotify-token.json`. *Disconnect* deletes it.
+- **Voice:** when connected, the assistant gets `spotify_play` (a genre, mood, artist, album, song or playlist: it searches and plays the first hit), `spotify_control` (pause, resume, next, previous, shuffle), `spotify_volume` and `spotify_now_playing`. It plays on the active device, else the preferred device from Settings, else this PC; if no Spotify app is open it starts the one here.
+- **Limits:** playback control needs Spotify Premium. Spotify's own editorial playlists may not show up in search for new developer apps, so "country" may get a user-made country playlist.
 
 ## Voices
 

@@ -81,6 +81,40 @@ record("settings save/load", abs(loaded.speech_speed - 1.25) < 1e-6 and loaded.r
        f"speed={loaded.speech_speed}")
 wait(lambda: tab.models_status.text() != "", 15)
 record("settings: model list from Ollama", "models installed" in tab.models_status.text(), tab.models_status.text())
+tab.spotify_device.setText("Test speaker")
+tab.save()
+record("settings: Spotify fields save/load", Settings.load().spotify_device == "Test speaker")
+
+# Spotify tools with a fake Spotify account (no network, your real sign-in is untouched)
+import wb_spotify  # noqa: E402
+import wb_spotify_tools  # noqa: E402
+
+
+class FakeSpotify:
+    played = []
+
+    def search(self, q, kind="playlist", limit=5):
+        return [{"name": f"{q.title()} Hits", "uri": f"spotify:{kind}:x"}]
+
+    def devices(self):
+        return [{"id": "d1", "name": "Other"}, {"id": "d2", "name": "Test speaker"}]
+
+    def play(self, device_id, context_uri=None, uris=None):
+        FakeSpotify.played.append((device_id, context_uri, uris))
+
+
+real_spotify = wb_spotify.Spotify
+wb_spotify.Spotify = FakeSpotify
+wb_spotify_tools.configure(s)
+s.spotify_ask_first = True
+reply = wb_spotify_tools.spotify_play("country")
+record("spotify: asks first, and a 'no' plays nothing", "did not allow" in reply and not FakeSpotify.played, reply)
+s.spotify_ask_first = False
+reply = wb_spotify_tools.spotify_play("country")
+record("spotify: plays a found playlist on the preferred device",
+       FakeSpotify.played == [("d2", "spotify:playlist:x", None)], reply)
+wb_spotify.Spotify = real_spotify
+s.spotify_ask_first = True
 record("settings: sound devices listed", tab.input_device.count() > 1 and tab.output_device.count() > 1,
        f"{tab.input_device.count() - 1} in, {tab.output_device.count() - 1} out")
 

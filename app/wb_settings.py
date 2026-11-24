@@ -89,6 +89,11 @@ class Settings:
     tv_name: str = ""
     tv_favorites: list = field(default_factory=list)  # [{"name": "CNN", "app": "Samsung TV Plus", "channel": "4556"}]
 
+    # Spotify (wb_spotify.py). The token is in %APPDATA%\AI Workbench\spotify-token.json, not here.
+    spotify_client_id: str = ""       # from the user's own app at developer.spotify.com (not a secret)
+    spotify_device: str = ""          # preferred device name; empty = this PC
+    spotify_ask_first: bool = True    # ask on screen before playing or changing music
+
     # What the assistant may do (wb_access.py). Filled in the Access tab; nothing personal in the code.
     allowed_programs: list = field(default_factory=list)    # Start-menu names it may open freely
     status_targets: list = field(default_factory=list)      # [{"name", "host", "port"}]

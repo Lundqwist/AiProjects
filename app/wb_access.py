@@ -235,7 +235,8 @@ def _press(vk: int) -> None:
 
 def media(action: str) -> str:
     """Control music or video playing on this PC (Spotify, YouTube in Chrome, VLC, …) with the
-    media keys. The user confirms on screen first.
+    media keys. The user confirms on screen first. When the spotify_* tools are offered, use those
+    for Spotify instead (they can also pick what to play).
 
     Args:
         action: play, pause, next, previous, stop, volume up, volume down or mute
