@@ -4,8 +4,11 @@ One Windows program for the five projects: settings in one place, file handling 
 
 **Stack:** Python 3.12 · PySide6 (Qt 6) · the project modules in `01-rag` … `05-eval`, imported directly
 
+It opens on a front page in lundqwist.se's navy and gold, like StoryMaker: the Lundqwist emblem, the program's name and a card per tool that opens its tab (`wb_home.py`; pictures in `assets\`). The band at the top carries the small tree-and-moon logo (click it to come back home), which is also the program's icon (`icon.ico`).
+
 | Tab | What you do there |
 |---|---|
+| **Home** | The front page: one card per tab below |
 | **Documents** | Add PDFs, Markdown and text (Add files / Add folder / drag-and-drop), see each file's chunk count, remove files, and chat with answers that cite their sources |
 | **Voice** | Hold to talk (or click to start/stop), live input level, the conversation as text, a box for typed messages, Stop speaking, New conversation |
 | **Invoices** | Add invoices (they're copied to the inbox), process now or watch the inbox, a table of processed invoices, the review list with the reason and a retry button, open the CSV in Excel |
