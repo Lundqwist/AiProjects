@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPro
                                QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
 import voice
+import wb_access
 import wb_tv_tools
 import wb_wake
 from wb_common import run_in_background
@@ -199,6 +200,7 @@ class VoiceTab(QWidget):
     def _sync_tools(self):
         """TV tools are offered to the model only when a TV is set up (Find TV can happen any time)."""
         wb_tv_tools.configure(self.s)
+        voice.TOOLS.update(wb_access.TOOLS)  # programs, status, tasks, containers, media (wb_access)
         if self.s.tv_ip:
             voice.TOOLS.update(wb_tv_tools.TOOLS)
         else:

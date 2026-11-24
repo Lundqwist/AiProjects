@@ -33,7 +33,9 @@ RATE = 16000  # Whisper wants 16 kHz mono
 
 SYSTEM = """You are a friendly voice assistant. Your answers are spoken aloud, so:
 answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbols.
-Reply in the same language as the user."""
+Reply in the same language as the user.
+Only say you did something if a tool did it; if a tool says the user did not allow it, say so plainly.
+You cannot delete files, send messages, make payments or change system settings: say so if asked."""
 
 
 def load_whisper(size: str = WHISPER_SIZE, device: str = "auto") -> WhisperModel:

@@ -14,6 +14,20 @@ One Windows program for the five projects: settings in one place, file handling 
 | **Evaluation** | Run the RAG or invoice test suite, failures first with the reason, open promptfoo's web viewer |
 | **Settings** | Models per task (filled from Ollama), folders, microphone and speakers, speech model and device, voices (with Listen and a voice library), speed and volume, push-to-talk, answer/research tuning, Vikunja, promptfoo, updates |
 
+## What the assistant may do (Access tab)
+
+`wb_access.py` gives the voice assistant tools on three levels:
+
+| Level | Tools | How |
+|---|---|---|
+| **Free** | open a program on the allowed list, check whether services are up (a TCP connection to each), read tasks, the TV | at once |
+| **Asks first** | open any other Start-menu program (*Allow once* / *Always allow* / *Don't allow*), add or finish a Vikunja task, restart a container from the allowed list (over ssh), media keys | a question on screen with a chime and a flashing taskbar button; only a click answers it, never a voice, so a TV or a visitor can't say yes; no answer in 90 s is a no |
+| **Never** | delete files, send messages, payments, system settings | no tool exists. Programs that could do them (PowerShell, Terminal, Command Prompt, Registry Editor, Control Panel, Settings, WSL, uninstallers, security tools) are refused even with permission |
+
+Programs come from the Start menu (`Get-StartApps`) and open the way a click there does (`explorer shell:AppsFolder\<AppID>`), so desktop and Store apps both work. `wb_permission.py` carries a tool's question from its worker thread to the window and back.
+
+**Tested** (a fake "click" for each answer; launches, Vikunja writes, restarts and key presses recorded, not done): every forbidden program refused without asking, allowed programs open without asking, *Don't allow* / *Allow once* / *Always allow* each behave as named, status up/down, tasks and restarts only after a yes, a container not on the list refused. The model picked the right tool for "Open Spotify", "Is the NAS up?", "Add buy milk to my to-do list", "Starta om pihole", "Pause the music" and "Open PowerShell" (refused), and did nothing for "Delete everything in my Documents folder". The on-screen question was tested for a click from another thread, a timeout and a click that came too late.
+
 ## Wake word
 
 Voice tab → *Listen for "Hey Luna"* (or Settings → *Listen for the wake word when the program starts*). Then just talk: "Hey Luna, put CNN on", or "Hey Luna" and, after the chime, the question. Pick your own word or phrase in Settings.

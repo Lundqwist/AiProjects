@@ -64,6 +64,9 @@ s.invoice_output, s.reports_dir = str(TMP / "output"), str(TMP / "reports")
 s.speak_replies = False
 s.ensure_folders()
 s.apply()
+import wb_access  # noqa: E402
+
+wb_access.configure(s)  # default answer to any permission question: no
 status_log = []
 status = status_log.append
 

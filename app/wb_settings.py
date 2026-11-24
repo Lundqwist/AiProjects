@@ -87,6 +87,11 @@ class Settings:
     tv_name: str = ""
     tv_favorites: list = field(default_factory=list)  # [{"name": "CNN", "app": "Samsung TV Plus", "channel": "4556"}]
 
+    # What the assistant may do (wb_access.py). Filled in the Access tab; nothing personal in the code.
+    allowed_programs: list = field(default_factory=list)    # Start-menu names it may open freely
+    status_targets: list = field(default_factory=list)      # [{"name", "host", "port"}]
+    allowed_containers: list = field(default_factory=list)  # [{"name", "host"}]; host = an ssh alias
+
     # Evaluation
     promptfoo_path: str = field(default_factory=_promptfoo)
     eval_dir: str = str(ROOT / "05-eval")

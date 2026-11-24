@@ -36,6 +36,11 @@ from tab_invoices import InvoicesTab  # noqa: E402
 from tab_research import ResearchTab  # noqa: E402
 from tab_settings import SettingsTab  # noqa: E402
 from tab_tv import TvTab  # noqa: E402
+from tab_access import AccessTab  # noqa: E402
+import sounddevice as sd  # noqa: E402
+import wb_access  # noqa: E402
+import wb_wake  # noqa: E402
+from wb_permission import PermissionBroker  # noqa: E402
 from tab_voice import VoiceTab  # noqa: E402
 import wb_updates  # noqa: E402
 from updates_dialog import UpdatesDialog  # noqa: E402
@@ -65,11 +70,17 @@ class MainWindow(QMainWindow):
         self.research = ResearchTab(s, status)
         self.evaluation = EvalTab(s, status)
         self.tv = TvTab(s, status)
+        # Questions from the assistant's tools ("open Notepad?") come up on screen, with a chime
+        self.broker = PermissionBroker(self, on_ask=lambda: sd.play(wb_wake.chime(), wb_wake.RATE,
+                                                                     device=s.output_device))
+        wb_access.configure(s, self.broker.ask)
+        self.access = AccessTab(s, status)
         self.settings_tab = SettingsTab(s)
         self.settings_tab.saved.connect(self.settings_saved)
         for widget, name in ((self.documents, "Documents"), (self.voice, "Voice"),
                              (self.invoices, "Invoices"), (self.research, "Research"),
-                             (self.tv, "TV"), (self.evaluation, "Evaluation"), (self.settings_tab, "Settings")):
+                             (self.tv, "TV"), (self.access, "Access"), (self.evaluation, "Evaluation"),
+                             (self.settings_tab, "Settings")):
             self.tabs.addTab(widget, name)
         self.tabs.setCurrentIndex(min(s.last_tab, self.tabs.count() - 1))
         self.setCentralWidget(self.tabs)
