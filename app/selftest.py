@@ -186,6 +186,24 @@ record("brain: repeated corrections become a rule", bool(new) and bool(wb_brain.
 bt.refresh()
 record("brain tab: lists rules, pages and notes", bt.tree.topLevelItemCount() == 5 and
        bt.tree.topLevelItem(2).childCount() == 2, bt.stats.text()[:120])
+# Brain map: the same brain as a graph, with where each fact came from, following the folder live
+bm = bt.show_map()
+g = bm.graph
+kinds = {k: sum(n.kind == k for n in g.nodes.values()) for k in ("note", "page", "rule")}
+record("brain map: notes, pages and rules, linked by where facts came from",
+       kinds["note"] == 2 and kinds["page"] >= 1 and kinds["rule"] >= 1 and
+       any(e.kind == "filed" for e in g.edges) and any(e.kind == "outdated" for e in g.edges), str(kinds))
+bm.slider.setValue(0)
+first = g.counts_at(bm.canvas.t)
+bm.slider.setValue(1000)
+record("brain map: the timeline shows less at the start than now",
+       sum(first.values()) < sum(g.counts_at(g.end).values()), f"{first} → {g.counts_at(g.end)}")
+wb_brain.add_note("The map should show this note at once.", "typed")
+bm.reload_if_changed()
+record("brain map: follows the folder live", bm.graph.counts_at(bm.graph.end)["notes"] == 3 and
+       any(i.startswith("note:") for i in bm.canvas.fresh), bm.summary.text())
+bm.grab()
+bm.close()
 
 # Create: a picture, a tune, a sung song, a story and a movie, each with a record of who made it
 s.creations_dir, s.code_projects_dir = str(TMP / "Creations"), str(TMP / "Code projects")

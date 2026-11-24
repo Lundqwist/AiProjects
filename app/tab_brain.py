@@ -74,10 +74,15 @@ class BrainTab(QWidget):
         self.file_btn.clicked.connect(self.file_unfiled)
         folder = QPushButton("Open folder")
         folder.clicked.connect(lambda: open_path(wb_brain.root()))
+        self.map_btn = QPushButton("Brain map")
+        self.map_btn.setToolTip("See the brain as a knowledge graph and replay how it grew")
+        self.map_btn.clicked.connect(self.show_map)
+        self.map_window = None
         file_row = QHBoxLayout()
         for b in (self.save_btn, self.tidy_btn, self.file_btn):
             file_row.addWidget(b)
         file_row.addStretch()
+        file_row.addWidget(self.map_btn)
         file_row.addWidget(folder)
         right = QWidget()
         r = QVBoxLayout(right)
@@ -175,6 +180,24 @@ class BrainTab(QWidget):
         self.editor.setReadOnly(path.name in ("log.md", "index.md"))
 
     # ---- actions ----------------------------------------------------------------------------
+    def show_map(self):
+        """The Brain map window (one at a time; it follows the folder while it is open)."""
+        from brain_map import BrainMapWindow
+        if self.map_window is None:
+            self.map_window = BrainMapWindow(self.window(), open_file=self._open_from_map)
+            self.map_window.finished.connect(lambda _: setattr(self, "map_window", None))
+            self.map_window.setAttribute(Qt.WA_DeleteOnClose)
+        self.map_window.show()
+        self.map_window.raise_()
+        self.map_window.activateWindow()
+        return self.map_window
+
+    def _open_from_map(self, path: Path):
+        self.open_file(path)
+        main = self.window()
+        if hasattr(main, "open_tab"):
+            main.open_tab("Brain")
+
     def add(self):
         text = self.note.text().strip()
         if not text or self.busy:
