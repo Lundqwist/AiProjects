@@ -16,6 +16,7 @@ import os
 import time
 import urllib.request
 import wave
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +47,28 @@ answer in 1-3 short sentences, no lists, no Markdown, no emoji, spell out symbol
 Reply in the same language as the user.
 Only say you did something if a tool did it; if a tool says the user did not allow it, say so plainly.
 You cannot delete files, send messages, make payments or change system settings: say so if asked."""
+
+
+class _NoSpan:
+    def set(self, **kw) -> None:
+        pass
+
+
+@contextmanager
+def no_span(kind: str, name: str, **detail):
+    """The default step recorder: does nothing. AI Workbench puts its own in (Assistant.span)."""
+    yield _NoSpan()
+
+
+def _stats(resp) -> dict:
+    out = {"tokens_in": getattr(resp, "prompt_eval_count", None), "tokens_out": getattr(resp, "eval_count", None)}
+    ed = getattr(resp, "eval_duration", None)
+    if out["tokens_out"] and ed:
+        out["tokens_per_s"] = round(out["tokens_out"] / (ed / 1e9), 1)
+    ld = getattr(resp, "load_duration", None)
+    if ld and ld > 2e8:
+        out["loading_s"] = round(ld / 1e9, 1)
+    return {k: v for k, v in out.items() if v}
 
 
 _whisper_cache: dict[tuple[str, str], WhisperModel] = {}
@@ -140,6 +163,7 @@ class Assistant:
         self.client = ollama.Client(timeout=CHAT_TIMEOUT)
         self.on_step = lambda text: None  # told about each step (e.g. "Searching the web…")
         self.last_steps: list[tuple[str, dict]] = []
+        self.span = no_span  # records each model round and tool call: span(kind, name, **detail)
         print(f"Ready ({time.time() - t:.1f}s to load)")
 
     def reset(self) -> None:
@@ -157,10 +181,16 @@ class Assistant:
                 rest.pop(0)
             self.history = self.history[:1] + rest
 
-    def _chat(self, tools: bool = True):
-        return self.client.chat(model=self.chat_model, messages=self.history,
-                                tools=list(TOOLS.values()) if tools else None, think=False,
-                                options={"temperature": 0.5, "num_ctx": 16384}).message
+    def _chat(self, tools: bool = True, round_no: int = 1):
+        with self.span("model", self.chat_model, round=round_no, messages=len(self.history),
+                       tools_offered=len(TOOLS) if tools else 0) as sp:
+            resp = self.client.chat(model=self.chat_model, messages=self.history,
+                                    tools=list(TOOLS.values()) if tools else None, think=False,
+                                    options={"temperature": 0.5, "num_ctx": 16384})
+            msg = resp.message
+            sp.set(**_stats(resp), answer=(msg.content or "").strip(),
+                   tool_calls=[c.function.name for c in msg.tool_calls or []])
+            return msg
 
     def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
         try:
@@ -185,26 +215,29 @@ class Assistant:
         self._trim_history()
         self.history.append({"role": "user", "content": text + hint})
         self.last_steps = []  # (tool, arguments) used for this answer, so the screen can say where it came from
-        for _ in range(6):  # room for search -> read a page or two -> CV before the spoken answer
+        for n in range(1, 7):  # room for search -> read a page or two -> CV before the spoken answer
             self.on_step("Thinking…")
             # web pages and the CV are long: the default context would cut off the conversation
-            msg = self._chat()
+            msg = self._chat(round_no=n)
             self.history.append(msg)
             if not msg.tool_calls:
                 return (msg.content or "").strip()
             for call in msg.tool_calls:
                 fn = TOOLS.get(call.function.name)
-                self.last_steps.append((call.function.name, dict(call.function.arguments or {})))
+                args = dict(call.function.arguments or {})
+                self.last_steps.append((call.function.name, args))
                 self.on_step(STEP_NAMES.get(call.function.name, f"Using {call.function.name}…"))
-                try:
-                    result = fn(**call.function.arguments) if fn else "Unknown tool"
-                except Exception as e:
-                    result = f"Tool error: {e}"
+                with self.span("tool", call.function.name, arguments=args) as sp:
+                    try:
+                        result = fn(**call.function.arguments) if fn else "Unknown tool"
+                    except Exception as e:
+                        result = f"Tool error: {e}"
+                    sp.set(result=str(result))
                 self.history.append({"role": "tool", "content": result, "tool_name": call.function.name})
         # Out of rounds: answer from what the tools returned instead of giving up
         self.history.append({"role": "user", "content": "Answer now from what you found, without more tools."})
         self.on_step("Writing the answer…")
-        msg = self._chat(tools=False)
+        msg = self._chat(tools=False, round_no=7)
         self.history.append(msg)
         return (msg.content or "").strip() or "Sorry, I got stuck."
 

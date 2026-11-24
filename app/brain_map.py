@@ -13,12 +13,13 @@ import time
 from datetime import datetime, timedelta
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton,
                                QSlider, QSplitter, QTextBrowser, QToolTip, QVBoxLayout, QWidget)
 
 import wb_brain_map
+import wb_trace
 from wb_common import GOLD, MUTED, NAVY, NAVY_2, NAVY_3, TEXT
 
 NOTE_C, NOTE_DIM, RULE_C, OLD_C = QColor("#7fb3ff"), QColor("#5a6b88"), QColor("#7ddc9a"), QColor("#ff8a80")
@@ -27,6 +28,12 @@ EDGE_C = {"filed": QColor(159, 176, 204, 70), "outdated": QColor(255, 138, 128, 
 K = 55.0                             # the layout's natural edge length
 SLIDER_MAX = 1000
 GLOW_SECONDS = 5.0
+USED_SECONDS = 12.0
+USED_C = QColor("#5ce1e6")           # pages the AI just recalled or filed into (as in the AI activity window)
+
+
+class _Bridge(QObject):
+    used = Signal(list)              # from the AI's thread to the window's
 
 
 class GraphCanvas(QWidget):
@@ -49,6 +56,7 @@ class GraphCanvas(QWidget):
         self.hover = ""
         self.match: set[str] = set()
         self.fresh: dict[str, float] = {}          # node id → when it appeared live (for a glow)
+        self.used: dict[str, float] = {}           # node id → when the AI just read or filed it
         self.recent: set[str] = set()              # appeared just before the timeline's moment
         self.scale, self.offset = 1.0, QPointF(0, 0)
         self.user_moved_view = False
@@ -153,12 +161,13 @@ class GraphCanvas(QWidget):
 
     def _tick(self):
         moving = self._step()
-        if not moving and not self.fresh:
+        if not moving and not self.fresh and not self.used:
             self.timer.stop()
             if not self.user_moved_view:
                 self.fit()
         now = time.monotonic()
         self.fresh = {i: t for i, t in self.fresh.items() if now - t < GLOW_SECONDS}
+        self.used = {i: t for i, t in self.used.items() if now - t < USED_SECONDS}
         self.update()
 
     def fit(self):
@@ -234,6 +243,14 @@ class GraphCanvas(QWidget):
                 p.setPen(Qt.NoPen)
                 p.setBrush(halo)
                 p.drawEllipse(pt, rs * 2.2, rs * 2.2)
+            if i in self.used:  # the AI is using this one right now: a cyan ring that pulses and fades
+                a = 1 - (now - self.used[i]) / USED_SECONDS
+                pulse = 0.6 + 0.4 * math.sin(now * 6)
+                ring_c = QColor(USED_C)
+                ring_c.setAlpha(int(255 * a * pulse))
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(ring_c, 3))
+                p.drawEllipse(pt, rs + 6, rs + 6)
             p.setBrush(c)
             ring = i == self.sel or i == self.hover or i in self.match
             p.setPen(QPen(QColor(TEXT), 2) if ring else QPen(QColor(NAVY_2), 1))
@@ -243,7 +260,7 @@ class GraphCanvas(QWidget):
             else:
                 p.drawEllipse(pt, rs, rs)
             show_label = (n.kind in ("page", "hub") and (self.scale > 0.45 or len(n.facts) > 3)) or ring or \
-                (focus and i in focus and n.kind != "note")
+                (focus and i in focus and n.kind != "note") or i in self.used
             if show_label:
                 text = n.title if len(n.title) <= 34 else n.title[:32] + "…"
                 tc = QColor(TEXT if n.kind != "note" else NOTE_C)
@@ -496,7 +513,8 @@ class BrainMapWindow(QDialog):
                         f"<span style='color:{NOTE_DIM.name()}'>●</span> note not filed yet &nbsp; "
                         f"<span style='color:{RULE_C.name()}'>◆</span> rule &nbsp; "
                         f"<span style='color:{OLD_C.name()}'>- -</span> note that outdated a fact &nbsp; "
-                        f"<span style='color:{GOLD}'>—</span> related pages &nbsp;·&nbsp; "
+                        f"<span style='color:{GOLD}'>—</span> related pages &nbsp; "
+                        f"<span style='color:{USED_C.name()}'>◯</span> used by the AI just now &nbsp;·&nbsp; "
                         "click to see a node, double-click to open its file, drag to move, wheel to zoom")
         legend.setObjectName("muted")
 
@@ -511,6 +529,26 @@ class BrainMapWindow(QDialog):
         self.watch = QTimer(self, interval=3000, timeout=self.reload_if_changed)
         self.reload(first=True)
         self.watch.start()
+
+        # When the AI recalls facts or files a note, those pages light up here (see the AI activity window)
+        self.bridge = _Bridge()
+        self.bridge.used.connect(self.highlight)
+        self._listener = lambda ev, obj: self.bridge.used.emit(obj.detail.get("sources") or []) \
+            if ev == "span" and obj.kind in ("recall", "filing") and obj.status == "ok" else None
+        wb_trace.subscribe(self._listener)
+
+    def highlight(self, sources: list):
+        """Light up the pages and notes the AI just used, e.g. ["wiki/Pixel (dog).md", "notes/….md"]."""
+        if not sources:
+            return
+        self.reload_if_changed()  # a page filed a moment ago may be new
+        now = time.monotonic()
+        for src in sources:
+            folder, _, name = str(src).replace("\\", "/").rpartition("/")
+            stem = name[:-3] if name.endswith(".md") else name
+            node = f"page:{stem}" if folder.endswith("wiki") else f"note:{stem}"
+            self.canvas.used[node] = now
+        self.canvas.heat(0.5)  # keeps the animation running while the rings fade
 
     # ---- loading ----------------------------------------------------------------------------
     def reload(self, first: bool = False):
@@ -688,7 +726,12 @@ class BrainMapWindow(QDialog):
         self.details.setHtml(f"<h3 style='color:{GOLD}'>{e(n.title)}</h3>{body}"
                              f"<p style='color:{MUTED}'><small>Double-click the node to open its file.</small></p>")
 
+    def done(self, r):
+        wb_trace.unsubscribe(self._listener)
+        super().done(r)
+
     def closeEvent(self, ev):
+        wb_trace.unsubscribe(self._listener)
         self.watch.stop()
         self.play_timer.stop()
         self.canvas.timer.stop()

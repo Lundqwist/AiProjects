@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlain
 
 import wb_ai
 import wb_brain
+import wb_trace
 from wb_common import run_in_background
 from wb_settings import Settings
 
@@ -119,6 +120,10 @@ class ExpertsTab(QWidget):
         last = next((t["a"] for t in reversed(self.turns[:-1]) if t["a"]), "")
 
         def work(emit):
+            with wb_trace.run(f"Experts: {q}", "experts"):
+                return answer(emit)
+
+        def answer(emit):
             notes = []
             if s.brain_in_experts:
                 wb_brain.configure(s)

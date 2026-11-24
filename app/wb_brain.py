@@ -33,6 +33,7 @@ from pathlib import Path
 
 import ollama
 
+import wb_trace
 from wb_settings import DATA, Settings
 
 _settings: Settings | None = None
@@ -184,9 +185,12 @@ def _json_chat(system: str, user: str) -> dict:
     client = ollama.Client(timeout=300)
     model = _model()
     extra = {"think": False} if model.startswith(("qwen3", "deepseek-r1")) else {}
-    msg = client.chat(model=model, format="json", options={"temperature": 0.1, "num_ctx": 8192},
-                      messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                      **extra).message
+    with wb_trace.span("model", model, expert="Writing expert", asked=user) as sp:
+        resp = client.chat(model=model, format="json", options={"temperature": 0.1, "num_ctx": 8192},
+                           messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                           **extra)
+        msg = resp.message
+        sp.set(**wb_trace.ollama_stats(resp), answer=msg.content or "")
     text = re.sub(r"<think>.*?</think>", "", msg.content or "", flags=re.S).strip()
     try:
         data = json.loads(text)
@@ -303,6 +307,13 @@ def _related_pages(text: str, k: int = 5) -> list[str]:
 
 def file_note(path: Path, emit=lambda m: None) -> list[str]:
     """Let the local AI file a note's facts into wiki pages. Returns the pages it changed."""
+    with wb_trace.span("filing", path.stem, note=path.stem) as sp:
+        changed = _file_note(path, emit)
+        sp.set(pages=changed, sources=[f"wiki/{c}.md" for c in changed] + [f"notes/{path.name}"])
+        return changed
+
+
+def _file_note(path: Path, emit) -> list[str]:
     with _filing:
         meta, body = _note_body(path)
         if meta.get("filed") == "yes":
@@ -538,10 +549,17 @@ def search(question: str, k: int = 6, kind: str | None = None) -> list[Hit]:
 
 def relevant(question: str, k: int = 5) -> list[Hit]:
     """Hits close enough to the question to be worth showing the AI."""
-    try:
-        return [h for h in search(question, k) if h.distance < MIN_RELEVANCE]
-    except Exception:  # noqa: BLE001
-        return []
+    with wb_trace.span("recall", "Search the brain", question=question) as sp:
+        try:
+            all_hits = search(question, k)
+        except Exception as e:  # noqa: BLE001
+            sp.set(problem=f"{type(e).__name__}: {e}")
+            return []
+        hits = [h for h in all_hits if h.distance < MIN_RELEVANCE]
+        sp.set(found=[f"{h.label} ({1 - h.distance:.0%} match): {h.text[:200]}" for h in hits],
+               left_out=len(all_hits) - len(hits), sources=list(dict.fromkeys(h.source for h in hits)),
+               embed_model=getattr(_s(), "embed_model", ""))
+        return hits
 
 
 # ---- what the assistant is told ----------------------------------------------------------------
@@ -631,6 +649,13 @@ def learning_due() -> bool:
 
 def learn_rules(emit=lambda m: None) -> list[str]:
     """Turn repeated or lasting corrections into rules under "## Learned" in rules.md."""
+    with wb_trace.span("learn", "Rules from corrections") as sp:
+        new = _learn_rules(emit)
+        sp.set(new_rules=new)
+        return new
+
+
+def _learn_rules(emit) -> list[str]:
     with _lock:
         cutoff = f"{_now() - timedelta(days=CORRECTION_DAYS):%Y-%m-%d}"
         items = [c for c in _load_corrections() if c.get("used") or c.get("at", "") >= cutoff]

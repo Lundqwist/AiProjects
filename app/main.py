@@ -27,9 +27,10 @@ if sys.stdout is None or sys.stderr is None:
     log = open(SETTINGS_DIR / "workbench.log", "a", encoding="utf-8", buffering=1)  # noqa: SIM115
     sys.stdout = sys.stderr = log
 
-from PySide6.QtCore import QByteArray, QTimer  # noqa: E402
+from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, Signal  # noqa: E402
 from PySide6.QtGui import QIcon  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget  # noqa: E402
+from PySide6.QtWidgets import (QApplication, QLabel, QMainWindow, QPushButton, QTabWidget,  # noqa: E402
+                               QVBoxLayout, QWidget)
 
 from wb_home import HeaderBand, HomePage  # noqa: E402
 
@@ -53,7 +54,13 @@ from wb_permission import PermissionBroker  # noqa: E402
 from tab_voice import VoiceTab  # noqa: E402
 import wb_updates  # noqa: E402
 from updates_dialog import UpdatesDialog  # noqa: E402
-from wb_common import THEME, run_in_background  # noqa: E402
+from wb_common import GOLD, THEME, run_in_background  # noqa: E402
+import wb_trace  # noqa: E402
+from ai_activity import AiActivityWindow  # noqa: E402
+
+
+class TraceBridge(QObject):
+    changed = Signal()  # a job started or ended, on whichever thread: handled on the window's
 
 
 class MainWindow(QMainWindow):
@@ -69,7 +76,16 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(QByteArray.fromBase64(s.window_geometry.encode()))
 
         self.ollama_label = QLabel("Ollama: checking…")
+        # AI activity: what the AI is doing, step by step (lit up while it works)
+        self.activity_btn = QPushButton("AI activity")
+        self.activity_btn.setToolTip("See each step the AI takes: listening, recall, models, tools, speaking")
+        self.activity_btn.clicked.connect(self.show_activity)
+        self.activity_window = None
+        self.statusBar().addPermanentWidget(self.activity_btn)
         self.statusBar().addPermanentWidget(self.ollama_label)
+        self._trace_bridge = TraceBridge()
+        self._trace_bridge.changed.connect(self._activity_light)
+        wb_trace.subscribe(lambda ev, obj: self._trace_bridge.changed.emit() if ev == "run" else None)
         status = lambda msg: self.statusBar().showMessage(str(msg), 8000)  # noqa: E731
 
         self.tabs = QTabWidget()
@@ -151,6 +167,23 @@ class MainWindow(QMainWindow):
 
         run_in_background(wb_brain.learn_rules, on_result=done,
                           on_error=lambda e: print(f"brain: rule learning failed: {e}"))
+
+    def show_activity(self):
+        if self.activity_window is None:
+            def on_map(sources):
+                self.brain.show_map().highlight(sources)
+            self.activity_window = AiActivityWindow(self, show_on_map=on_map)
+            self.activity_window.setAttribute(Qt.WA_DeleteOnClose)
+            self.activity_window.finished.connect(lambda _: setattr(self, "activity_window", None))
+        self.activity_window.show()
+        self.activity_window.raise_()
+        self.activity_window.activateWindow()
+        return self.activity_window
+
+    def _activity_light(self):
+        working = wb_trace.busy()
+        self.activity_btn.setText("◉ AI working…" if working else "AI activity")
+        self.activity_btn.setStyleSheet(f"color: {GOLD}; border-color: {GOLD};" if working else "")
 
     def open_tab(self, name: str):
         for i in range(self.tabs.count()):

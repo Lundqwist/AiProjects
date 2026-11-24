@@ -23,6 +23,7 @@ import httpx
 import ollama
 
 import wb_settings
+import wb_trace
 from wb_settings import Settings
 
 # ---- local experts ----------------------------------------------------------------------------
@@ -328,20 +329,31 @@ def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: fl
         extra["think"] = key == "reasoning"  # the reasoning expert thinks first; others answer at once
     client = ollama.Client(timeout=600)
     opts = {"temperature": temperature, "num_ctx": 16384}
-    if on_text is None:
-        msg = client.chat(model=model, messages=messages, options=opts, **extra).message
-        return _strip_think(msg.content or ""), bool(getattr(msg, "thinking", None))
-    out, thought = [], False
-    for part in client.chat(model=model, messages=messages, options=opts, stream=True, **extra):
-        if getattr(part.message, "thinking", None):
-            if not thought:
-                on_text("")  # lets a screen show "thinking…" without text yet
-            thought = True
-        piece = part.message.content or ""
-        if piece:
-            out.append(piece)
-            on_text(piece)
-    return _strip_think("".join(out)), thought
+    with wb_trace.span("model", model, expert=EXPERTS[key].name, thinks=bool(extra.get("think"))) as sp:
+        if on_text is None:
+            resp = client.chat(model=model, messages=messages, options=opts, **extra)
+            msg = resp.message
+            text = _strip_think(msg.content or "")
+            sp.set(**wb_trace.ollama_stats(resp), answer=text)
+            return text, bool(getattr(msg, "thinking", None))
+        out, thought, last, n = [], False, None, 0
+        for part in client.chat(model=model, messages=messages, options=opts, stream=True, **extra):
+            last = part
+            if getattr(part.message, "thinking", None):
+                if not thought:
+                    on_text("")  # lets a screen show "thinking…" without text yet
+                    sp.set(state="thinking before it answers")
+                thought = True
+            piece = part.message.content or ""
+            if piece:
+                out.append(piece)
+                on_text(piece)
+                n += 1
+                if n % 25 == 0:  # the activity window shows the answer growing
+                    sp.set(state="writing", answer="".join(out))
+        text = _strip_think("".join(out))
+        sp.set(**(wb_trace.ollama_stats(last) if last else {}), state="done", answer=text)
+        return text, thought
 
 
 def _strip_think(text: str) -> str:
@@ -366,6 +378,9 @@ def ask(s: Settings, messages: list[dict], *, task: str = "chat", expert: str | 
     else:
         go, why_online = wants_online(s, messages, task, big)
     if go:
+        wb_trace.event("route", "Online first", why=why_online,
+                       tried_in_order=[p["name"] for p in s.online_providers or []])
+    if go:
         for p in s.online_providers or []:
             ok, state = provider_state(p)
             if not ok:
@@ -373,7 +388,10 @@ def ask(s: Settings, messages: list[dict], *, task: str = "chat", expert: str | 
                     notes.append(f"{p['name']} skipped: {state}")
                 continue
             try:
-                text, tin, tout = _call_online(p, messages, max_tokens, temperature)
+                with wb_trace.span("online", p["name"], model=p["model"], where=_where(p),
+                                   sent_chars=sum(len(m["content"]) for m in messages)) as sp:
+                    text, tin, tout = _call_online(p, messages, max_tokens, temperature)
+                    sp.set(tokens_in=tin, tokens_out=tout, answer=text)
             except OutOfTokens as e:
                 _record(p["name"], block=(_next_month(), "out of credit"), error=str(e))
                 notes.append(f"{p['name']} is out of tokens ({str(e)[:90]}); moved on")
@@ -405,6 +423,9 @@ def ask(s: Settings, messages: list[dict], *, task: str = "chat", expert: str | 
     elif not local_ok:
         return None
     key, why = (expert, "you chose it") if expert else route(question)
+    wb_trace.event("route", f"{EXPERTS[key].name} on this PC", why=why or "it fits the question",
+                   online=("none had tokens left" if go else "not wanted for this job") if s.online_mode != "off"
+                   else "turned off in Settings", notes=list(notes))
     text, thought = _local(s, key, messages, on_text, temperature)
     model = expert_model(s, key)
     return Answer(text, f"{EXPERTS[key].name} ({model})", "on this PC", why, False, (0, 0), notes, thought)

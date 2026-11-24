@@ -20,6 +20,7 @@ import wb_code
 import wb_create
 import wb_spotify
 import wb_spotify_tools
+import wb_trace
 import wb_tv_tools
 import wb_wake
 import wb_web_tools
@@ -454,13 +455,25 @@ class VoiceTab(QWidget):
         self._start_busy("Waiting for the previous question…" if self.pending > 1 else "Starting…")
 
         def work(emit):
+            # The whole turn is one run in the AI activity window: speech to text, recall, model
+            # rounds, tools and speaking each become a step in it
+            with wb_trace.run("Voice: (listening)" if audio is not None else f"Voice: {text}", "voice") as tr:
+                return turn(emit, tr)
+
+        def turn(emit, tr):
             emit("begin")
             bot = self._ensure_bot(emit)
             bot.on_step = emit  # "Thinking…", "Searching the web…", …
+            bot.span = wb_trace.span
+            if strip_wake:
+                wb_trace.event("listen", f"Heard “{wake_word}”", by="wake word listener (Whisper tiny on the CPU)")
             t0 = time.time()
             if audio is not None:
                 emit("Transcribing…")
-                said, lang = bot.transcribe(audio)
+                with wb_trace.span("stt", f"Whisper {bot.whisper_size}", audio_s=round(len(audio) / RATE, 1)) as sp:
+                    said, lang = bot.transcribe(audio)
+                    sp.set(heard=said, language=lang)
+                tr.set_title(f"Voice: {said or '(heard nothing)'}")
                 if strip_wake:  # "Hey Luna, put CNN on" -> "put CNN on"
                     found, rest = wb_wake.find_wake_word(said, wake_word)
                     # If the better model misheard the wake word (TV talk around it), it can't tell
@@ -496,7 +509,9 @@ class VoiceTab(QWidget):
                     bot.history[0]["content"] += wb_brain.facts_block(hits)
                     brain_steps.append(("recall", {"question": said}))
                 if wb_brain.wants_remembering(said):
-                    wb_brain.remember(said, "voice", background=True)
+                    path = wb_brain.remember(said, "voice", background=True)
+                    wb_trace.event("remember", "Saved as a note", note=path.stem,
+                                   info="Filed into the wiki in the background (its own run)")
                     brain_steps.append(("remember", {"fact": said}))
                     asked = said + "\n\n(This was saved to the user's notes already. Just confirm it briefly.)"
             answer = bot.reply(asked, lang)
@@ -509,7 +524,11 @@ class VoiceTab(QWidget):
                 emit("Speaking…")
                 # Speak with the voice that fits the answer itself: a short English command can be
                 # mistaken for Swedish ("start TV and CNN" -> "StartTV och CNN")
-                bot.speak(for_speech(answer), guess_language(answer, lang))
+                spoken = for_speech(answer)
+                voice_lang = guess_language(answer, lang)
+                with wb_trace.span("tts", f"Piper ({voice_lang})", text=spoken, voice=self.s.voice_sv
+                                   if voice_lang == "sv" else self.s.voice_en):
+                    bot.speak(spoken, voice_lang)
             return True
 
         def progress(item):

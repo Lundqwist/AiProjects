@@ -193,11 +193,14 @@ kinds = {k: sum(n.kind == k for n in g.nodes.values()) for k in ("note", "page",
 record("brain map: notes, pages and rules, linked by where facts came from",
        kinds["note"] == 2 and kinds["page"] >= 1 and kinds["rule"] >= 1 and
        any(e.kind == "filed" for e in g.edges) and any(e.kind == "outdated" for e in g.edges), str(kinds))
-bm.slider.setValue(0)
-first = g.counts_at(bm.canvas.t)
+# (notes are timed to the minute, so both test notes may share the first moment: compare with just before it)
+from datetime import timedelta  # noqa: E402
+
+before = g.counts_at(g.start - timedelta(minutes=1))
 bm.slider.setValue(1000)
-record("brain map: the timeline shows less at the start than now",
-       sum(first.values()) < sum(g.counts_at(g.end).values()), f"{first} → {g.counts_at(g.end)}")
+record("brain map: the timeline is empty before the first memory and full now",
+       sum(before.values()) == 0 and g.counts_at(g.end)["notes"] == 2 and bm.canvas.visible.sum() == len(g.nodes),
+       f"{before} → {g.counts_at(g.end)}")
 wb_brain.add_note("The map should show this note at once.", "typed")
 bm.reload_if_changed()
 record("brain map: follows the folder live", bm.graph.counts_at(bm.graph.end)["notes"] == 3 and
@@ -346,6 +349,41 @@ wait(lambda: not wb_brain.busy(), 300)
 used = [n for n, _ in getattr(vt.bot, "last_steps", [])]
 record("voice: remembers into the brain", ok and "remember" in used and "Anna" in wiki_text(),
        f"tools {used}")
+
+# AI activity: every job above was recorded as a run of steps
+import wb_trace  # noqa: E402
+from ai_activity import AiActivityWindow  # noqa: E402
+
+runs = wb_trace.runs()
+spoken = next((r for r in runs if r.source == "voice" and any(sp.kind == "stt" for sp in r.spans)), None)
+kinds = [sp.kind for sp in spoken.spans] if spoken else []
+model = next((sp for sp in spoken.spans if sp.kind == "model"), None) if spoken else None
+record("activity: a spoken question is recorded as speech to text, recall and model steps",
+       bool(spoken) and "stt" in kinds and "model" in kinds and spoken.title != "Voice: (listening)" and
+       bool(model and model.detail.get("tokens_out")), f"{spoken.title if spoken else '-'}: {kinds}")
+dog = next((r for r in runs if "dog" in r.title.lower() and r.source == "voice"), None)
+recall = next((sp for sp in dog.spans if sp.kind == "recall"), None) if dog else None
+record("activity: the brain recall step says which pages it used",
+       bool(recall and any("wiki/" in x for x in recall.detail.get("sources", []))),
+       str(recall.detail.get("sources") if recall else "no recall step"))
+expert_run = next((r for r in runs if r.source == "experts"), None)
+record("activity: an Experts answer shows who was chosen and why",
+       bool(expert_run) and any(sp.kind == "route" and sp.detail.get("why") for sp in expert_run.spans),
+       str([(sp.kind, sp.name) for sp in expert_run.spans] if expert_run else "no experts run"))
+record("activity: filing a note runs on its own, with the writing expert inside",
+       any(r.source == "filing" and any(sp.kind == "model" for sp in r.spans) for r in runs),
+       str(sorted({r.source for r in runs})))
+aw = AiActivityWindow()
+aw.show()
+aw._pick_run(dog.id if dog else runs[-1].id, manual=True)
+if recall:
+    aw._pick_span(recall.id)
+app.processEvents()
+record("activity window: lists the jobs and shows a step's details",
+       aw.list.count() == len(wb_trace.runs()) and len(aw.flow.boxes) >= 2 and
+       ("Brain recall" in aw.details.toPlainText() or not recall), f"{aw.list.count()} jobs, {len(aw.flow.boxes)} steps")
+aw.grab()
+aw.close()
 
 # A stuck question: Stop waiting gives up on it, and the next question still gets an answer
 import threading  # noqa: E402
