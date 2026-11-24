@@ -11,4 +11,5 @@ accelerate>=1.10
 safetensors>=0.6
 scipy>=1.15
 imageio-ffmpeg>=0.6   # ffmpeg for Create -> Movie and the Song MP3s
+sentencepiece>=0.2    # T5 tokenizer of LTX-Video (moving movie scenes; model: install-video-maker.ps1)
 # Songs with singing (Create -> Song) use ACE-Step 1.5 in its own environment: install-song-maker.ps1

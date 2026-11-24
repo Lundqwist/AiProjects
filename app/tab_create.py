@@ -305,9 +305,16 @@ class MoviePage(PlayerMixin, CreatorPage):
         self.subs.setChecked(True)
         self.music = QCheckBox("Music")
         self.music.setChecked(True)
+        import wb_video
+        has_video, why = wb_video.installed()
+        self.moving = QCheckBox("Moving scenes")
+        self.moving.setChecked(has_video)
+        self.moving.setEnabled(has_video)
+        self.moving.setToolTip("LTX-Video animates each painted scene: real motion, about a minute per scene. "
+                               "Off: the pictures get slow camera moves instead (fast)." if has_video else why)
         self.online = QCheckBox("May use online AI")
         self.online.setToolTip("Screenplay and pictures online while tokens last; otherwise all made here")
-        for w in (self.length, self.look, self.language, self.subs, self.music, self.online):
+        for w in (self.length, self.look, self.language, self.subs, self.music, self.moving, self.online):
             self.options.addWidget(w)
         self.options.addStretch()
         self.refresh()
@@ -328,7 +335,8 @@ class MoviePage(PlayerMixin, CreatorPage):
         import wb_movie
         return wb_movie.make_movie(self.s, idea, self.length.currentText(), self.look.currentText(),
                                    self.language.currentText(), self.subs.isChecked(), self.music.isChecked(),
-                                   online=True if self.online.isChecked() else None, emit=emit)
+                                   online=True if self.online.isChecked() else None, emit=emit,
+                                   moving=self.moving.isChecked())
 
 
 class StoryPage(CreatorPage):

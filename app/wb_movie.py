@@ -6,8 +6,11 @@
 2. Each scene is painted (wb_create.paint: online image AI while it has tokens, else SDXL-Turbo).
 3. Each narration is read by the Piper voice chosen in Settings (the voice assistant's voice).
 4. MusicGen makes up to 30 s of music, looped with a crossfade under the whole movie.
-5. Frames are drawn with slow zoom and pan (a "Ken Burns" camera), crossfades between scenes, a title
-   and subtitles, and piped into ffmpeg (from imageio-ffmpeg) as H.264 + AAC in an .mp4.
+5. Each painted scene is brought to life by LTX-Video (wb_video.py): real motion, as long as the
+   narration needs. Without that model (or when "Moving scenes" is off) the pictures get a slow
+   zoom and pan instead (a "Ken Burns" camera).
+6. Crossfades between scenes, a title and subtitles are added and the frames piped into ffmpeg (from
+   imageio-ffmpeg) as H.264 + AAC in an .mp4.
 
 The scene pictures, narration and a .srt subtitle file are kept in a folder beside the movie.
 """
@@ -53,8 +56,9 @@ def screenplay(s: Settings, idea: str, scenes: int, style: str, language: str, o
         'picture shows them the same way>",\n'
         ' "music": "<English, 10-25 words: genre, mood, instruments, tempo, for background music>",\n'
         ' "scenes": [{"picture": "<English image prompt, 15-30 words: who is where doing what, camera angle; '
-        'name the characters by their looks, never only by name>", "narration": "<1-3 short sentences in '
-        'LANGUAGE, read aloud by a narrator>"}]}\n'
+        'name the characters by their looks, never only by name>", "motion": "<English, 10-25 words: what '
+        'moves during the scene: what the characters do, wind, water, light, and one simple camera move>", '
+        '"narration": "<1-3 short sentences in LANGUAGE, read aloud by a narrator>"}]}\n'
         "Write exactly N scenes that tell a whole story with a beginning, a middle and an end. The narration "
         "carries the story; the pictures show it. No text, letters or words in the pictures."
     ).replace("LANGUAGE", language).replace("STYLE", style).replace("exactly N", f"exactly {scenes}")
@@ -212,6 +216,21 @@ class Shot:
         return self.img.transform((W, H), Image.EXTENT, box, Image.BILINEAR)
 
 
+class MovingShot:
+    """One scene as video frames from LTX-Video, cropped to 16:9 and scaled to the movie size."""
+
+    def __init__(self, frames: list):
+        self.frames = frames
+
+    def frame(self, t: float):
+        from PIL import Image
+        t = min(max(t, 0.0), 1.0)
+        im = self.frames[min(len(self.frames) - 1, int(t * len(self.frames)))]
+        crop = round(im.width * H / W)
+        top = (im.height - crop) // 2
+        return im.crop((0, top, im.width, top + crop)).resize((W, H), Image.BICUBIC)
+
+
 def ffmpeg_exe() -> str:
     try:
         import imageio_ffmpeg
@@ -267,6 +286,18 @@ def render(shots: list[Shot], starts: list[float], durs: list[float], subs: list
             proc.kill()
 
 
+def _save_clip(frames: list, path: Path) -> None:
+    """One scene's raw clip (no sound) beside the scene picture, to reuse or look at."""
+    w, h = frames[0].size
+    r = subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                        "-s", f"{w}x{h}", "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-crf", "20",
+                        "-pix_fmt", "yuv420p", str(path)],
+                       input=b"".join(f.convert("RGB").tobytes() for f in frames), capture_output=True,
+                       creationflags=0x08000000)
+    if r.returncode != 0:
+        raise RuntimeError(f"ffmpeg couldn't save {path.name}: {r.stderr.decode(errors='replace')[-200:]}")
+
+
 def _srt(starts, narr_lens, texts) -> str:
     def ts(x):
         ms = int(round(x * 1000))
@@ -282,18 +313,24 @@ def _srt(starts, narr_lens, texts) -> str:
 
 def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: str = STYLES[0],
                language: str = "English", subtitles: bool = True, music: bool = True, online: bool | None = None,
-               emit=lambda m: None) -> wb_create.Made:
+               emit=lambda m: None, moving: bool = True) -> wb_create.Made:
     import io
 
     import numpy as np
     import soundfile as sf
     from PIL import Image
 
+    import wb_video
+
     t0 = time.time()
     count = LENGTHS.get(length, 4)
+    still_why = ""
+    if moving:
+        moving, why = wb_video.ready()
+        still_why = "" if moving else f"still pictures with camera moves instead of moving scenes: {why}"
     emit("Writing the screenplay…")
     play, writer = screenplay(s, idea, count, style, language, online)
-    notes = [f"screenplay written by {writer.by} {writer.where}"] + list(writer.notes)
+    notes = [f"screenplay written by {writer.by} {writer.where}"] + list(writer.notes) + ([still_why] if still_why else [])
     stem = f"{wb_create._stamp()}-{wb_create._slug(play['title'])}"
     out = wb_create.folder(s, "movie") / f"{stem}.mp4"
     work = out.with_name(stem + "-scenes")
@@ -301,7 +338,7 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
     (work / "screenplay.json").write_text(json.dumps(play, indent=2, ensure_ascii=False), encoding="utf-8")
 
     with wb_create._lock:  # paint, compose and narrate without another GPU job in between
-        painters, shots = [], []
+        painters, shots, pictures = [], [], []
         seed = int(time.time()) % 2**30
         for i, sc in enumerate(play["scenes"]):
             emit(f"Painting scene {i + 1} of {len(play['scenes'])}…")
@@ -310,7 +347,8 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
             png, by, where, _ = wb_create.paint(s, prompt, "Wide", online, notes, seed=seed + i)
             (work / f"scene-{i + 1:02}.png").write_bytes(png)
             painters.append((by, where.split(" (")[0]))
-            shots.append(Shot(Image.open(io.BytesIO(png)), i))
+            pictures.append(Image.open(io.BytesIO(png)).convert("RGB"))
+            shots.append(Shot(pictures[-1], i))
 
         emit("Recording the narrator…")
         voice_name, voice = _voice(s, language)
@@ -343,6 +381,26 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
         audio_path = work / "soundtrack.wav"
         sf.write(audio_path, mix, AUDIO_RATE)
 
+        if moving:
+            t_anim = time.time()
+            freed = wb_create.make_room()
+            if freed:
+                notes.append(f"moved {', '.join(freed)} off the graphics card for the video model")
+            try:
+                for i, sc in enumerate(play["scenes"]):
+                    emit(f"Animating scene {i + 1} of {len(shots)} ({durs[i]:.0f} s)…")
+                    what = str(sc.get("motion") or "gentle natural motion, slow camera push in").strip()
+                    # the T5 encoder reads 128 tokens: style and motion first, the shared look may be cut
+                    prompt = f"{style}, smooth motion. {what}. {sc['picture']}. {play['look']}"
+                    frames = wb_video.animate(pictures[i], prompt, durs[i], seed + 100 * i,
+                                              lambda m, i=i: emit(f"Animating scene {i + 1} of {len(shots)} {m}"))
+                    _save_clip(frames, work / f"scene-{i + 1:02}.mp4")
+                    shots[i] = MovingShot(frames)
+            finally:
+                wb_video.unload()
+            notes.append(f"scenes animated by {wb_video.MODEL} (Lightricks) on this PC "
+                         f"({time.time() - t_anim:.0f} s)")
+
     texts = [str(sc.get("narration", "")).strip() for sc in play["scenes"]]
     (out.with_suffix(".srt")).write_text(_srt(starts, narr_lens, texts), encoding="utf-8")
     subs = [_subtitle(tx) if subtitles and tx else None for tx in texts]
@@ -352,12 +410,14 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
     notes.insert(1, f"{len(shots)} scenes painted by {', '.join(sorted({f'{b} {w}' for b, w in painters}))}")
     notes.append(f"narrated by the Piper voice {voice_name} on this PC")
     notes.append(f"put together with ffmpeg on this PC: {total:.0f} s, {W}x{H}, {FPS} fps")
-    makers = [writer.by] + sorted({b.split(" (")[0] for b, _ in painters}) + ["Piper"] + (["MusicGen"] if music else [])
+    makers = ([writer.by] + sorted({b.split(" (")[0] for b, _ in painters}) + (["LTX-Video"] if moving else [])
+              + ["Piper"] + (["MusicGen"] if music else []))
     local = writer.where == "on this PC" and all(w.startswith("on this PC") for _, w in painters)
     made = wb_create.Made(out, "movie", idea, ", ".join(makers[:-1]) + " and " + makers[-1],
                           f"{'on this PC' if local else 'on this PC and online'} ({time.time() - t0:.0f} s in all)",
                           notes, {"title": play["title"], "style": style, "language": language,
                                   "seconds": round(total, 1), "scenes": play["scenes"], "look": play["look"],
-                                  "music": music_desc, "voice": voice_name, "folder": work.name})
+                                  "music": music_desc, "voice": voice_name, "folder": work.name,
+                                  "moving": moving})
     made.save_record()
     return made

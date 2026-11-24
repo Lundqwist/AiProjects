@@ -30,7 +30,25 @@ LM_MODEL = "acestep-5Hz-lm-0.6B"   # the "thinking" model that plans the song; 1
 DIT_MODEL = "acestep-v15-turbo"
 LANG_CODES = {"English": "en", "Swedish": "sv"}
 LENGTHS = {"Short (≈1 min)": 60, "Medium (≈2 min)": 120, "Long (≈3 min)": 180}
+MAX_SECONDS = 480  # ACE-Step's limit with the planning LM on a 12 GB card
 _server: subprocess.Popen | None = None
+
+
+def bpm_of(style: str, default: int = 110) -> int:
+    """The tempo named in the style tags ("…, 120 BPM"), kept to a singable 60-180."""
+    m = re.search(r"(\d{2,3})\s*bpm", style, re.I)
+    return max(60, min(180, int(m.group(1)))) if m else default
+
+
+def seconds_needed(lyrics: str, bpm: int) -> int:
+    """How long the lyrics take to sing: about two bars (8 beats) per sung line, a bar of breath
+    between parts, and room for an intro and an outro. A song cut at a fixed length used to end
+    mid-verse when the lyrics were longer than the length chosen."""
+    beat = 60 / bpm
+    lines = [l.strip() for l in lyrics.splitlines() if l.strip()]
+    sung = [l for l in lines if not l.startswith(("[", "("))]
+    parts = sum(1 for l in lines if l.startswith("["))
+    return round(len(sung) * 8 * beat + parts * 4 * beat + 20)
 
 
 def installed() -> tuple[bool, str]:
@@ -110,11 +128,12 @@ def _data(r: httpx.Response):
 
 
 def sing(style: str, lyrics: str, seconds: int, language: str, emit=lambda m: None,
-         timeout: float = 900) -> tuple[bytes, dict]:
+         timeout: float = 900, bpm: int | None = None) -> tuple[bytes, dict]:
     """Have ACE-Step sing the lyrics in the style. Returns (wav bytes, what ACE-Step reports).
-    WAV, because ACE-Step's own MP3 export needs ffmpeg on PATH; make_song converts it."""
+    WAV, because ACE-Step's own MP3 export needs ffmpeg on PATH; make_song converts it.
+    The tempo is given, so the planning model can't race through long lyrics (it once chose 300 BPM)."""
     ensure_server(emit)
-    payload = {"prompt": style, "lyrics": lyrics, "audio_duration": float(seconds),
+    payload = {"prompt": style, "lyrics": lyrics, "audio_duration": float(seconds), "bpm": bpm or bpm_of(style),
                "vocal_language": LANG_CODES.get(language, "en"), "audio_format": "wav", "batch_size": 1,
                "thinking": True, "inference_steps": 8, "model": DIT_MODEL}
     task = _data(httpx.post(f"{URL}/release_task", json=payload, timeout=60))["task_id"]
@@ -143,11 +162,13 @@ def sing(style: str, lyrics: str, seconds: int, language: str, emit=lambda m: No
     raise RuntimeError(f"ACE-Step took longer than {timeout / 60:.0f} minutes")
 
 
-def _to_mp3(wav: bytes, out: Path) -> None:
-    """WAV bytes to a 192 kbit/s MP3 with the ffmpeg from imageio-ffmpeg."""
+def _to_mp3(wav: bytes, out: Path, seconds: float) -> None:
+    """WAV bytes to a 192 kbit/s MP3 with the ffmpeg from imageio-ffmpeg, with a short fade at the
+    end so the last note never stops abruptly."""
     import wb_movie
+    fade = f"afade=t=out:st={max(0.0, seconds - 4):.2f}:d=4"
     r = subprocess.run([wb_movie.ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "wav", "-i", "-",
-                        "-codec:a", "libmp3lame", "-b:a", "192k", str(out)],
+                        "-af", fade, "-codec:a", "libmp3lame", "-b:a", "192k", str(out)],
                        input=wav, capture_output=True, creationflags=0x08000000)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg couldn't make the MP3: {r.stderr.decode(errors='replace')[-200:]}")
@@ -163,14 +184,16 @@ def _json_from(text: str) -> dict:
 
 def write_lyrics(s: Settings, idea: str, style: str, language: str, seconds: int,
                  online: bool | None) -> tuple[dict, wb_ai.Answer]:
-    verses = 1 if seconds <= 70 else 2 if seconds <= 130 else 3
+    shape, lines = ((("[Intro], [Verse 1], [Chorus], [Outro]"), 10) if seconds <= 70 else
+                    (("[Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro]"), 20) if seconds <= 130 else
+                    (("[Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Bridge], [Chorus], [Outro]"), 30))
     system = (
         "You are a songwriter. Reply with JSON only, no other text:\n"
         '{"title": "<song title>", "style": "<English, comma-separated tags: genre, mood, main instruments, '
         'vocal (e.g. female vocal / male vocal), tempo in BPM>", "lyrics": "<the lyrics>"}\n'
-        f"Write singable, rhyming lyrics in {language} with {verses} verse(s) and a catchy chorus that repeats. "
-        "Mark the parts on their own lines: [Intro], [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]. "
-        "Short lines, 6-10 syllables each. Use \\n for new lines inside the JSON string."
+        f"Write singable, rhyming lyrics in {language} with exactly these parts, each marker on its own line: "
+        f"{shape}. At most {lines} sung lines in all, 4 lines per verse and chorus; [Intro] and [Outro] have no "
+        "words. Short lines, 6-10 syllables each. Use \\n for new lines inside the JSON string."
         + (f" The style should be: {style}." if style else ""))
     last = ""
     for _ in range(2):
@@ -207,14 +230,21 @@ def make_song(s: Settings, idea: str, style: str = "", language: str = "English"
         writer = a.by
         notes.append(f"lyrics and style written by {a.by} {a.where}")
         notes += a.notes
+    bpm = bpm_of(song["style"])
+    needed = seconds_needed(song["lyrics"], bpm)
+    if needed > seconds:
+        notes.append(f"made {min(needed, MAX_SECONDS)} s long instead of {seconds} s, so all the lyrics are sung")
+    if needed > MAX_SECONDS:
+        notes.append(f"the lyrics need about {needed} s but ACE-Step stops at {MAX_SECONDS} s: the end may be cut")
+    seconds = min(max(seconds, needed), MAX_SECONDS)
     unloaded = wb_create.free_gpu()  # ACE-Step needs the graphics memory Ollama holds
     if unloaded:
         notes.append(f"unloaded {', '.join(unloaded)} from the graphics card to make room")
     t = time.time()
     with wb_create._lock:
-        wav, info = sing(song["style"], song["lyrics"], seconds, language, emit)
+        wav, info = sing(song["style"], song["lyrics"], seconds, language, emit, bpm=bpm)
     out = wb_create.folder(s, "song") / f"{wb_create._stamp()}-{wb_create._slug(song['title'])}.mp3"
-    _to_mp3(wav, out)
+    _to_mp3(wav, out, seconds)
     out.with_suffix(".txt").write_text(f"{song['title']}\n\n{song['lyrics']}\n", encoding="utf-8")
     metas = info.get("metas") or {}
     made = wb_create.Made(out, "song", idea, f"ACE-Step 1.5 ({DIT_MODEL} + {LM_MODEL})",

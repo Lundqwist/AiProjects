@@ -158,6 +158,7 @@ record("online AI without a key is skipped and says why",
 s.creations_dir, s.code_projects_dir = str(TMP / "Creations"), str(TMP / "Code projects")
 s.code_roots = [s.code_projects_dir]
 s.ensure_folders()
+import wb_create  # noqa: E402
 import wb_song  # noqa: E402
 from tab_create import CreateTab  # noqa: E402
 
@@ -175,10 +176,21 @@ for page, idea in jobs:
         page.length.setCurrentIndex(0)
     page.idea.setPlainText(idea)
     page.create()
-    ok = wait(lambda: not page.busy, 600)
+    ok = wait(lambda: not page.busy, 1800 if page is ct.movie else 600)  # moving scenes take 1-2 min each
     made = page.gallery.count() == 1 and page.path is not None and page.path.exists()
     record(f"create: {page.kind} made, listed and credited", ok and made and "Made by" in page.credit.text(),
            page.credit.text().split("<br>")[0][:120] or page.state.text()[:120])
+    if page is ct.movie and made and ct.movie.moving.isChecked():
+        rec = wb_create.load_record(page.path)
+        clips = list(page.path.with_name(rec.details["folder"]).glob("scene-*.mp4")) if rec else []
+        record("create: movie scenes animated (LTX-Video)", bool(rec and rec.details.get("moving") and clips),
+               f"{len(clips)} scene clips")
+    if page is ct.song and made:
+        rec = wb_create.load_record(page.path)
+        d = rec.details if rec else {}
+        need = wb_song.seconds_needed(d.get("lyrics", ""), wb_song.bpm_of(d.get("style", "")))
+        record("create: song long enough for its lyrics", d.get("seconds", 0) >= min(need, wb_song.MAX_SECONDS),
+               f"{d.get('seconds')} s for {need} s of lyrics")
 ct.shutdown()  # also stops the song server the song started
 time.sleep(3)
 record("create: song server stopped afterwards", not wb_song._healthy(), "")

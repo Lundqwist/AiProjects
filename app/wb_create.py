@@ -194,9 +194,37 @@ def _music():
         from transformers import AutoProcessor, MusicgenForConditionalGeneration
         proc = AutoProcessor.from_pretrained(MUSIC_MODEL)
         model = MusicgenForConditionalGeneration.from_pretrained(MUSIC_MODEL)
-        model.to("cuda" if torch.cuda.is_available() else "cpu")
         _pipes["music"] = (proc, model)
-    return _pipes["music"]
+    import torch
+    proc, model = _pipes["music"]
+    model.to("cuda" if torch.cuda.is_available() else "cpu")  # make_room() may have moved it out
+    return proc, model
+
+
+def make_room() -> list[str]:
+    """Empty the graphics card for a big job (moving movie scenes): Ollama's models, MusicGen and an
+    idle song server all leave it. Without this the video model spilled into shared memory and one
+    scene took over 20 minutes instead of about one. Returns what was freed."""
+    gone = free_gpu()
+    if "music" in _pipes:
+        _pipes["music"][1].to("cpu")
+        gone.append("MusicGen")
+    try:
+        import wb_song
+        if wb_song._server is not None and wb_song._server.poll() is None:
+            wb_song.stop_server()
+            gone.append("the song maker")
+    except ImportError:
+        pass
+    try:
+        import gc
+
+        import torch
+        gc.collect()
+        torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    return gone
 
 
 def music_prompt(s: Settings, idea: str) -> tuple[str, str]:

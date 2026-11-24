@@ -36,9 +36,9 @@ An agent (`qwen3:8b` with tool calling) searches the web, reads the pages it cho
 
 ### Create: pictures, music, songs, stories and movies
 
-Describe an idea in English or Swedish and the workbench makes it on this PC: pictures with SDXL-Turbo, short tunes with MusicGen, stories by the writing model, and **songs with singing**: the writing model writes rhyming lyrics with verses and a chorus (or I paste my own), and [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) sings and plays a 1–3 minute song, about 30 seconds per minute of song. **Movies** are narrated short films: the writing model writes a screenplay, every scene is painted in the same style with the same characters, a Piper voice narrates it, MusicGen scores it, and ffmpeg puts it together with slow camera moves, crossfades, a title and subtitles. Every creation is saved with a record of which model made it and where. The voice assistant can do all of it too: "make a movie about a lighthouse keeper and a whale".
+Describe an idea in English or Swedish and the workbench makes it on this PC: pictures with SDXL-Turbo, short tunes with MusicGen, stories by the writing model, and **songs with singing**: the writing model writes rhyming lyrics with verses and a chorus (or I paste my own), and [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) sings and plays it, as long as the lyrics need, about 30 seconds per minute of song. **Movies** are narrated short films: the writing model writes a screenplay, every scene is painted in the same style with the same characters, [LTX-Video](https://huggingface.co/Lightricks/LTX-Video) brings each painted scene to life as real video (characters move, water flows, the camera travels), a Piper voice narrates it, MusicGen scores it, and ffmpeg puts it together with crossfades, a title and subtitles. A 4-scene film of about 40 seconds takes 7–8 minutes. Every creation is saved with a record of which model made it and where. The voice assistant can do all of it too: "make a movie about a lighthouse keeper and a whale".
 
-![Four frames from a movie the workbench made from one sentence: title card, subtitles and the same keeper in every scene](docs/screenshots/9-movie.jpg)
+![Four frames from a movie the workbench made from one sentence: the title, and a fox cub that walks through the snow and finds its way home under the northern lights, with subtitles](docs/screenshots/9-movie.jpg)
 
 ### TV: wake it, pick a channel, use a remote
 
@@ -79,7 +79,7 @@ Each one also runs on its own, with its own README.
 
 ## Built with
 
-Python 3.12 · PySide6 (Qt 6) · Ollama (`gemma3:12b`, `qwen3:8b`, `nomic-embed-text`) · ChromaDB · faster-whisper · Piper · PyTorch + diffusers (SDXL-Turbo, MusicGen) · ACE-Step 1.5 · ffmpeg · promptfoo · uv
+Python 3.12 · PySide6 (Qt 6) · Ollama (`gemma3:12b`, `qwen3:8b`, `nomic-embed-text`) · ChromaDB · faster-whisper · Piper · PyTorch + diffusers (SDXL-Turbo, MusicGen, LTX-Video) · ACE-Step 1.5 · ffmpeg · promptfoo · uv
 
 Nothing personal is in the code: TV, programs, servers and integrations are filled in from the program's own settings, and tokens are read from environment variables, never stored. All test data in the repository is made up.
 
@@ -96,7 +96,7 @@ ollama pull qwen3:8b
 npm install -g promptfoo
 ```
 
-For the Create tab, install `requirements-create.txt` as described at the top of that file (PyTorch with CUDA), and for songs run `install-song-maker.ps1` once (ACE-Step in its own environment, about 13 GB).
+For the Create tab, install `requirements-create.txt` as described at the top of that file (PyTorch with CUDA), and for songs run `install-song-maker.ps1` once (ACE-Step in its own environment, about 13 GB), and for moving movie scenes `install-video-maker.ps1` (LTX-Video, about 25 GB; without it movies use still pictures with camera moves).
 
 Run the program with `.venv\Scripts\pythonw.exe app\main.py`, or make a Start menu shortcut with `app\install-shortcut.ps1`.
 
