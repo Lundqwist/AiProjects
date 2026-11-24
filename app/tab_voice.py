@@ -579,11 +579,18 @@ class VoiceTab(QWidget):
         self.view.verticalScrollBar().setValue(self.view.verticalScrollBar().maximum())
 
     def shutdown(self):
-        if self.wake:
-            self.wake.stop()
-        if self.stream:
-            self.stream.close()
-        stop_sound()
+        # Each step on its own: a microphone that fails to stop mustn't keep the rest running
+        for step in ((lambda: self.wake.stop()) if self.wake else None,
+                     (lambda: self.stream.close()) if self.stream else None,
+                     stop_sound):
+            if step:
+                try:
+                    step()
+                except Exception as e:  # noqa: BLE001
+                    print(f"voice shutdown: {type(e).__name__}: {e}")
+        self.pool.clear()
+        for pool in self._old_pools:
+            pool.clear()
 
 
 class _WakeSignals(QObject):

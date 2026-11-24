@@ -23,6 +23,8 @@ import subprocess
 import time
 import urllib.request
 
+import wb_lifecycle
+
 NO_WINDOW = 0x08000000
 
 ALLOW_ONCE, ALWAYS, DENY = "Allow once", "Always allow", "Don't allow"
@@ -94,7 +96,8 @@ def find_program(spoken: str) -> str | None:
 def launch(name: str) -> None:
     app_id = start_apps()[name]
     # explorer opens anything in the Start menu by its app id, the same way a click there does
-    subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app_id}"], creationflags=NO_WINDOW)
+    # (outside the workbench's job: the program must stay open when the workbench closes)
+    wb_lifecycle.start_independent(["explorer.exe", f"shell:AppsFolder\\{app_id}"], creationflags=NO_WINDOW)
 
 
 def open_program(name: str) -> str:

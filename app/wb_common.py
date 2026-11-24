@@ -65,7 +65,8 @@ def open_path(path: str | Path) -> None:
     """Open a file or folder in its Windows default program."""
     p = Path(path)
     if p.exists():
-        os.startfile(str(p))  # noqa: S606 - local, user-chosen path
+        import wb_lifecycle  # outside the job: the file stays open when the workbench closes
+        wb_lifecycle.open_independent(str(p))
 
 
 class PathPicker(QWidget):

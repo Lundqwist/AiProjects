@@ -253,6 +253,8 @@ def schedule_restart_updates(updates: list[Update]) -> Path:
     SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     plan_file = SETTINGS_DIR / "pending-updates.json"
     plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-    subprocess.Popen([str(scripts / "python.exe"), str(ROOT / "app" / "apply_updates.py"), str(plan_file)],
-                     cwd=ROOT, creationflags=0x00000010 if os.name == "nt" else 0)  # new console: shows progress
+    import wb_lifecycle  # outside the job: it has to keep running after this process ends
+    wb_lifecycle.start_independent([str(scripts / "python.exe"), str(ROOT / "app" / "apply_updates.py"),
+                                    str(plan_file)],
+                                   cwd=ROOT, creationflags=0x00000010 if os.name == "nt" else 0)  # new console
     return plan_file

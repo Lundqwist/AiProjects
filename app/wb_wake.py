@@ -184,9 +184,12 @@ class WakeListener:
     def stop(self):
         self._stop.set()
         if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+            stream, self._stream = self._stream, None
+            for step in (stream.stop, stream.close):
+                try:  # PortAudio sometimes says "Invalid stream pointer" here; stop anyway
+                    step()
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"stop: {type(e).__name__}: {e}")
         try:
             self._jobs.put_nowait(None)
         except queue.Full:

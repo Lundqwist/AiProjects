@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 import warnings
 from pathlib import Path
 
@@ -15,6 +16,7 @@ sys.path[:0] = [str(APP_DIR)] + [str(ROOT / d) for d in ("01-rag", "02-voice", "
 warnings.filterwarnings("ignore")
 
 from wb_settings import SETTINGS_DIR, Settings  # noqa: E402
+import wb_lifecycle  # noqa: E402
 
 settings = Settings.load()
 os.environ["OLLAMA_HOST"] = settings.ollama_host  # must be set before ollama is imported
@@ -171,18 +173,25 @@ class MainWindow(QMainWindow):
                               "<span style='color:#ff8a80'>● Ollama is not running. Start it from the Start menu.</span>"))
 
     def closeEvent(self, event):
-        self.s.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
-        self.s.last_tab = self.tabs.currentIndex()
         try:
+            self.s.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
+            self.s.last_tab = self.tabs.currentIndex()
             self.s.save()
-        except OSError:
-            pass
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+        # Every part gets its chance to stop, even if one before it fails (a microphone that
+        # won't stop used to raise here and leave the rest running)
         for tab in (self.voice, self.invoices, self.evaluation):
-            tab.shutdown()
+            try:
+                tab.shutdown()
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
         super().closeEvent(event)
+        QApplication.instance().quit()  # also when a dialog or other window is still open
 
 
 def main() -> int:
+    wb_lifecycle.bind_children_to_process()  # helper processes end when the workbench ends
     settings.ensure_folders()
     settings.apply()
     try:  # its own taskbar button and icon, instead of pythonw's
@@ -216,4 +225,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    # The window has closed and saved. Don't wait for background threads (a stuck Ollama request,
+    # ssh, a microphone that won't stop): they used to keep pythonw.exe running with no window.
+    wb_lifecycle.hard_exit(code)
