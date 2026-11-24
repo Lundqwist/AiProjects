@@ -48,39 +48,128 @@ def _json_from(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
+SILENT_WORDS = re.compile(r"\b(silent (movie|film)|stumfilm|no narrat\w*|without (a )?narrat\w*|no voice|"
+                          r"utan (berättar\w*|röst|speaker)|no talking)\b", re.I)
+
+
 def screenplay(s: Settings, idea: str, scenes: int, style: str, language: str, online: bool | None) -> tuple[dict, wb_ai.Answer]:
+    """The writer first lists what the request asks for, then keeps to it. Before this, a small model
+    dropped details ("undead priest" became a woman with silver hair), invented others (new characters,
+    a flower, a backstory), and couldn't make a silent film because the narrator was always added."""
     system = (
-        "You write screenplays for short narrated picture films. Reply with JSON only, no other text:\n"
-        '{"title": "<title in LANGUAGE>",\n'
-        ' "look": "<English, 10-20 words: colours and light, and how each main character looks, so every '
-        'picture shows them the same way>",\n'
+        "You write screenplays for short picture films. Reply with JSON only, no other text:\n"
+        '{"wishes": [{"wish": "<each specific thing the request asks for, a short English phrase>", '
+        '"scenes": [<numbers of the scenes that show it, or [] for things about the whole film>]}],\n'
+        ' "silent": <true only if the request asks for a silent film, no narrator or no voice; else false>,\n'
+        ' "title": "<title in LANGUAGE>",\n'
+        ' "setting": "<English, at most 12 words: the world, game or place and the time the request gives>",\n'
+        ' "characters": [{"name": "<name>", "looks": "<English, 10-18 words: species or race FIRST, then body, '
+        'face, hair, clothes, held items>"}],\n'
+        ' "look": "<English, at most 12 words: colours, light and art direction for every picture>",\n'
         ' "music": "<English, 10-25 words: genre, mood, instruments, tempo, for background music>",\n'
-        ' "scenes": [{"picture": "<English image prompt, 15-30 words: who is where doing what, camera angle; '
-        'name the characters by their looks, never only by name>", "motion": "<English, 10-25 words: what '
-        'moves during the scene: what the characters do, wind, water, light, and one simple camera move>", '
-        '"narration": "<1-3 short sentences in LANGUAGE, read aloud by a narrator>"}]}\n'
-        "Write exactly N scenes that tell a whole story with a beginning, a middle and an end. The narration "
-        "carries the story; the pictures show it. No text, letters or words in the pictures."
-    ).replace("LANGUAGE", language).replace("STYLE", style).replace("exactly N", f"exactly {scenes}")
+        ' "scenes": [{"who": ["<names of the characters in this scene>"], "picture": "<English, 12-25 words: '
+        'what happens where, and the camera angle>", "motion": "<English, 10-20 words: what moves during the '
+        'scene and one simple camera move>", "narration": "<1-3 short sentences in LANGUAGE read by a '
+        'narrator; if silent, the text of a title card: one short sentence of 6-12 words in LANGUAGE that tells '
+        'what happens>"}]}\n'
+        "Rules:\n"
+        "1. Stay true to the request. Everything it asks for must be in the film; list each wish and the "
+        "scenes that show it. Keep its names, its words for what a character is (undead, zombie, orc, robot, "
+        "child...), the world or game it names, and the events it describes. A character described as undead "
+        "or a zombie IS undead and must look it (e.g. grey rotting skin, glowing eyes); never turn that into "
+        "something else or into enemies.\n"
+        "2. Invent only what the story needs to fill gaps, and keep it plain. No extra main characters, "
+        "subplots, backstories or objects the request doesn't suggest. If it mentions a group, give the group "
+        "two or three members named by their role (the warrior, the rogue), not new names.\n"
+        "3. If the request names a game, book or world, keep to it; if it names none, don't name one. Don't "
+        "name places: describe them plainly (a misty lake in a dead grey forest, a torch-lit crypt), in a way "
+        "that fits the character's kind and home.\n"
+        "4. Write exactly N scenes with a beginning, a middle and an end. No text, letters or words in the "
+        "pictures."
+    ).replace("LANGUAGE", language).replace("exactly N", f"exactly {scenes}")
     last_error = ""
-    for attempt in range(2):
+    for attempt in range(3):
         a = wb_ai.ask(s, [{"role": "system", "content": system},
-                          {"role": "user", "content": idea + (f"\n\n(Last reply failed: {last_error}. JSON only.)"
-                                                              if last_error else "")}],
-                      task="story", expert="writing", big=online, temperature=0.8, max_tokens=4000)
+                          {"role": "user", "content": f"The request:\n{idea}"
+                           + (f"\n\n(Your last reply had a problem: {last_error}. Fix it. JSON only.)"
+                              if last_error else "")}],
+                      task="story", expert="writing", big=online, temperature=0.6, max_tokens=5000)
         try:
             play = _json_from(a.text)
             items = [sc for sc in play.get("scenes", []) if str(sc.get("picture", "")).strip()]
             if len(items) < 2:
                 raise ValueError("fewer than two scenes")
+            if not play.get("characters") and attempt < 2:
+                raise ValueError("no characters with their looks")
+            missing = [str(w.get("wish", "")) for w in play.get("wishes", [])
+                       if isinstance(w, dict) and w.get("scenes") == [] and not _film_wide(str(w.get("wish", "")))]
+            if missing and attempt < 2:
+                raise ValueError(f"these wishes are in no scene: {'; '.join(missing)}")
             play["scenes"] = items[:scenes + 2]
+            for sc in play["scenes"]:  # 'Title card: "Wounded"' -> 'Wounded'
+                sc["narration"] = re.sub(r"^\s*(title card|intertitle|card)\s*:\s*", "", str(sc.get("narration", "")),
+                                         flags=re.I).strip().strip("'\"“”‘’")
+            play["silent"] = bool(play.get("silent")) or bool(SILENT_WORDS.search(idea))
             play.setdefault("title", idea[:60])
             play.setdefault("look", style)
+            play.setdefault("setting", "")
             play.setdefault("music", "gentle cinematic orchestral background music, 80 BPM")
             return play, a
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, AttributeError) as e:
             last_error = str(e)
     raise RuntimeError(f"The writing expert didn't write a usable screenplay ({last_error}).")
+
+
+def _film_wide(wish: str) -> bool:
+    """Wishes about the whole film rather than a scene (silent, style, music, length, language)."""
+    return bool(re.search(r"silent|style|music|sound|narrat|voice|language|swedish|english|long|short|colou?r|"
+                          r"black and white|animated|anime|cartoon|title|subtitle", wish, re.I))
+
+
+def _chars(play: dict) -> list[dict]:
+    return [c for c in play.get("characters", []) if isinstance(c, dict) and c.get("looks") and c.get("name")]
+
+
+def _tag(c: dict) -> str:
+    """A short description that stands in for a name: the first part of the looks, which the screenplay
+    asks to be the species or race ("undead female elf", "dwarf"), at most three words."""
+    first = re.split(r"[,;.]", str(c["looks"]).strip())[0]
+    return " ".join(first.split()[:3])
+
+
+def _scene_text(play: dict, sc: dict, field: str) -> tuple[str, str]:
+    """The scene's picture (or motion) text with names swapped for looks, since picture models don't know
+    names, and the full looks of the scene's main character, which go first in the prompt."""
+    chars = _chars(play)
+    who = [str(n).lower() for n in sc.get("who", []) if n]
+    text = str(sc.get(field) or "").strip().rstrip(".")
+    in_scene = [c for c in chars if str(c["name"]).lower() in who or str(c["name"]).split()[0].lower() in text.lower()]
+    lead = (in_scene or chars[:1] or [None])[0]
+    for c in sorted(chars, key=lambda c: -len(str(c["name"]))):
+        if str(c["name"]).lower().startswith("the "):  # a role ("the warrior") already says what to paint
+            continue
+        for name in {str(c["name"]), str(c["name"]).split()[0]}:
+            text = re.sub(rf"\b{re.escape(name)}\b", "the " + _tag(c), text)
+    return text, (str(lead["looks"]).strip().rstrip(".") if lead else "")
+
+
+def picture_prompt(play: dict, sc: dict, style: str) -> str:
+    # SDXL reads only ~77 tokens: style, the main character's full looks, the scene; setting and look last
+    scene, looks = _scene_text(play, sc, "picture")
+    return ". ".join(p for p in (style, looks, scene, play.get("setting", ""), play.get("look", "")) if p)
+
+
+def video_prompt(play: dict, sc: dict, style: str) -> str:
+    """The video model's T5 encoder reads 128 tokens. The main character's looks go right after the
+    style and are said to stay: with them after the motion, LTX smoothed an undead priest's rotting face
+    into a normal woman's within two seconds. (The distilled model runs without guidance, so the negative
+    prompt has no effect: what must stay has to be in this prompt.)"""
+    motion, looks = _scene_text(play, sc, "motion")
+    scene, _ = _scene_text(play, sc, "picture")
+    keep = f"The {looks} keeps exactly this look in every frame" if looks else ""
+    return ". ".join(p for p in (f"{style}, smooth motion", keep,
+                                 motion or "gentle natural motion, slow camera push in", scene,
+                                 play.get("setting", "")) if p)
 
 
 # ---- 3. narration -------------------------------------------------------------------------------
@@ -342,19 +431,24 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
         seed = int(time.time()) % 2**30
         for i, sc in enumerate(play["scenes"]):
             emit(f"Painting scene {i + 1} of {len(play['scenes'])}…")
-            # SDXL reads only ~77 tokens: style first, then the scene, then the shared look (may be cut short)
-            prompt = f"{style}. {sc['picture']}. {play['look']}"
-            png, by, where, _ = wb_create.paint(s, prompt, "Wide", online, notes, seed=seed + i)
+            png, by, where, _ = wb_create.paint(s, picture_prompt(play, sc, style), "Wide", online, notes, seed=seed + i)
             (work / f"scene-{i + 1:02}.png").write_bytes(png)
             painters.append((by, where.split(" (")[0]))
             pictures.append(Image.open(io.BytesIO(png)).convert("RGB"))
             shots.append(Shot(pictures[-1], i))
 
-        emit("Recording the narrator…")
-        voice_name, voice = _voice(s, language)
-        speech = [narrate(voice, str(sc.get("narration", "")).strip(), s.speech_speed) if sc.get("narration")
-                  else np.zeros(0, dtype="float32") for sc in play["scenes"]]
-        narr_lens = [len(w) / AUDIO_RATE for w in speech]
+        silent = play["silent"]
+        if silent:  # as asked: no narrator; the text is shown on screen long enough to read
+            voice_name = ""
+            speech = [np.zeros(0, dtype="float32") for _ in play["scenes"]]
+            narr_lens = [max(2.5, len(str(sc.get("narration", "")).split()) * 0.4 + 1.0) for sc in play["scenes"]]
+            notes.append("silent film as asked: no narrator, the text is shown on screen")
+        else:
+            emit("Recording the narrator…")
+            voice_name, voice = _voice(s, language)
+            speech = [narrate(voice, str(sc.get("narration", "")).strip(), s.speech_speed) if sc.get("narration")
+                      else np.zeros(0, dtype="float32") for sc in play["scenes"]]
+            narr_lens = [len(w) / AUDIO_RATE for w in speech]
         durs = [max(MIN_SCENE, LEAD + ln + TAIL) for ln in narr_lens]
         starts = [0.0]
         for d in durs[:-1]:
@@ -389,10 +483,7 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
             try:
                 for i, sc in enumerate(play["scenes"]):
                     emit(f"Animating scene {i + 1} of {len(shots)} ({durs[i]:.0f} s)…")
-                    what = str(sc.get("motion") or "gentle natural motion, slow camera push in").strip()
-                    # the T5 encoder reads 128 tokens: style and motion first, the shared look may be cut
-                    prompt = f"{style}, smooth motion. {what}. {sc['picture']}. {play['look']}"
-                    frames = wb_video.animate(pictures[i], prompt, durs[i], seed + 100 * i,
+                    frames = wb_video.animate(pictures[i], video_prompt(play, sc, style), durs[i], seed + 100 * i,
                                               lambda m, i=i: emit(f"Animating scene {i + 1} of {len(shots)} {m}"))
                     _save_clip(frames, work / f"scene-{i + 1:02}.mp4")
                     shots[i] = MovingShot(frames)
@@ -403,21 +494,28 @@ def make_movie(s: Settings, idea: str, length: str = "Short (4 scenes)", style: 
 
     texts = [str(sc.get("narration", "")).strip() for sc in play["scenes"]]
     (out.with_suffix(".srt")).write_text(_srt(starts, narr_lens, texts), encoding="utf-8")
-    subs = [_subtitle(tx) if subtitles and tx else None for tx in texts]
+    # a silent film tells its story with the text on screen, so it is shown even with subtitles off
+    subs = [_subtitle(tx) if (subtitles or play["silent"]) and tx else None for tx in texts]
     emit("Filming…")
     render(shots, starts, durs, subs, _title_card(play["title"]), audio_path, out, emit)
 
     notes.insert(1, f"{len(shots)} scenes painted by {', '.join(sorted({f'{b} {w}' for b, w in painters}))}")
-    notes.append(f"narrated by the Piper voice {voice_name} on this PC")
+    if not play["silent"]:
+        notes.append(f"narrated by the Piper voice {voice_name} on this PC")
+    wishes = [str(w.get("wish")) for w in play.get("wishes", []) if isinstance(w, dict) and w.get("wish")]
+    if wishes:
+        notes.append("what the screenplay took from your request: " + "; ".join(wishes))
     notes.append(f"put together with ffmpeg on this PC: {total:.0f} s, {W}x{H}, {FPS} fps")
     makers = ([writer.by] + sorted({b.split(" (")[0] for b, _ in painters}) + (["LTX-Video"] if moving else [])
-              + ["Piper"] + (["MusicGen"] if music else []))
+              + ([] if play["silent"] else ["Piper"]) + (["MusicGen"] if music else []))
     local = writer.where == "on this PC" and all(w.startswith("on this PC") for _, w in painters)
     made = wb_create.Made(out, "movie", idea, ", ".join(makers[:-1]) + " and " + makers[-1],
                           f"{'on this PC' if local else 'on this PC and online'} ({time.time() - t0:.0f} s in all)",
                           notes, {"title": play["title"], "style": style, "language": language,
                                   "seconds": round(total, 1), "scenes": play["scenes"], "look": play["look"],
-                                  "music": music_desc, "voice": voice_name, "folder": work.name,
-                                  "moving": moving})
+                                  "music": music_desc, "voice": voice_name or "none (silent film)",
+                                  "folder": work.name, "moving": moving, "silent": play["silent"],
+                                  "characters": play.get("characters", []), "setting": play.get("setting", ""),
+                                  "wishes": play.get("wishes", [])})
     made.save_record()
     return made
