@@ -1,4 +1,4 @@
-"""Settings tab: Ollama models, folders, sound devices and voice, integrations."""
+"""Settings: Ollama models, folders, sound devices and voice, integrations, Spotify and the VS Code extension."""
 from __future__ import annotations
 
 import time
@@ -57,6 +57,7 @@ class SettingsTab(QWidget):
         lay.addWidget(self._tuning_group())
         lay.addWidget(self._integrations_group())
         lay.addWidget(self._spotify_group())
+        lay.addWidget(self._vscode_group())
         lay.addStretch()
 
         scroll = QScrollArea()
@@ -88,7 +89,7 @@ class SettingsTab(QWidget):
         self.refresh_models()
 
     def showEvent(self, event):
-        # The Experts tab can change the work folder too: show its value unless it is being edited here
+        # The conversation can change the work folder too: show its value unless it is being edited here
         if self.code_projects_dir.edit.text() == self._shown_code_dir:
             self.code_projects_dir.edit.setText(self.s.code_projects_dir)
         self._shown_code_dir = self.s.code_projects_dir
@@ -114,7 +115,7 @@ class SettingsTab(QWidget):
         f.addRow("Documents (answers)", self.chat_model)
         f.addRow("Invoices (vision)", self.vision_model)
         f.addRow("Embeddings", self.embed_model)
-        f.addRow("Research and voice (tools)", self.agent_model)
+        f.addRow("Research and the assistant (tools)", self.agent_model)
         f.addRow("", row)
         hint = QLabel("A changed Ollama address takes effect after restarting the app. "
                       "Changing the embedding model needs a new document database.")
@@ -135,7 +136,7 @@ class SettingsTab(QWidget):
         f.addRow("", _muted("The general expert is the Documents model above. A missing model: ollama pull <name>."))
         self.online_mode = QComboBox()
         for key, text in (("off", "Off: everything stays on this PC"),
-                          ("big", "Larger jobs: research reports, long texts, or when ticked"),
+                          ("big", "Larger jobs: research reports and long typed texts"),
                           ("always", "Always: every question, while tokens last")):
             self.online_mode.addItem(text, key)
         self.online_min_chars = QSpinBox(minimum=500, maximum=200000, singleStep=1000)
@@ -303,7 +304,7 @@ class SettingsTab(QWidget):
         wake_hint = QLabel("Any word or phrase. Two words, or one that's rare in speech and on TV, "
                            "trigger by mistake less often. Everything is heard and recognized on this PC only. "
                            "Switch between Hey Luna, Conversation and Hold to talk with the mode button on "
-                           "the Voice tab; the program starts in the mode you used last.")
+                           "the conversation; the program starts in Hey Luna (or in Hold to talk, if that was your last choice).")
         wake_hint.setObjectName("muted")
         wake_hint.setWordWrap(True)
         f.addRow("", wake_hint)
@@ -380,6 +381,67 @@ class SettingsTab(QWidget):
         self._show_spotify()
         return g
 
+    def _vscode_group(self) -> QGroupBox:
+        import wb_vscode_ext
+        g = QGroupBox("VS Code")
+        f = QFormLayout(g)
+        self.bridge_on = QCheckBox("Let the AI Workbench extension in VS Code use this program")
+        self.bridge_port = QSpinBox(minimum=1024, maximum=65535)
+        self.vscode_install = QPushButton("Install in VS Code")
+        self.vscode_install.setObjectName("primary")
+        self.vscode_install.clicked.connect(self.install_vscode)
+        self.vscode_status = QLabel("")
+        self.vscode_status.setObjectName("muted")
+        self.vscode_status.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(self.vscode_install)
+        row.addWidget(self.vscode_status, 1)
+        f.addRow("", self.bridge_on)
+        f.addRow("Bridge port (127.0.0.1)", self.bridge_port)
+        f.addRow("Extension", row)
+        f.addRow("", _muted(
+            "The extension adds an AI Workbench chat to VS Code's activity bar, plus Explain, Fix, Write tests and "
+            "Change this code… on selected code. Every answer comes from your local experts here, never an "
+            "internet AI. It talks to this program only on this PC, with a token kept in the settings folder; "
+            f"its source is in {wb_vscode_ext.SOURCE}. AI Workbench must be running for it to answer."))
+        self._show_vscode()
+        return g
+
+    def _show_vscode(self, text: str = ""):
+        import wb_vscode_ext
+
+        def check(emit):
+            return wb_vscode_ext.installed_version(), wb_vscode_ext.package_info()["version"]
+
+        def show(result):
+            have, latest = result
+            if have is None:
+                self.vscode_status.setText(text or "Not installed")
+                self.vscode_install.setText("Install in VS Code")
+            elif have != latest:
+                self.vscode_status.setText(text or f"Version {have} installed; {latest} is here")
+                self.vscode_install.setText(f"Update to {latest}")
+            else:
+                self.vscode_status.setText(text or f"Version {have} installed")
+                self.vscode_install.setText("Install again")
+
+        if text:
+            self.vscode_status.setText(text)
+        run_in_background(check, on_result=show, on_error=lambda e: self.vscode_status.setText(str(e)))
+
+    def install_vscode(self):
+        import wb_vscode_ext
+        self.vscode_install.setEnabled(False)
+
+        def done(msg):
+            self._show_vscode(msg)
+
+        def failed(e):
+            self.vscode_status.setText(f"<span style='color:#ff8a80'>Not installed: {e}</span>")
+
+        run_in_background(lambda emit: wb_vscode_ext.install(emit), on_progress=self.vscode_status.setText,
+                          on_result=done, on_error=failed, on_done=lambda: self.vscode_install.setEnabled(True))
+
     def _show_spotify(self, text: str = ""):
         on = wb_spotify.connected()
         self.spotify_disconnect.setEnabled(on)
@@ -398,7 +460,7 @@ class SettingsTab(QWidget):
         def done(who):
             self.spotify_connect.setEnabled(True)
             self._show_spotify(f"Connected as {who}")
-            self.saved.emit()  # the voice tab offers the Spotify tools now
+            self.saved.emit()  # the conversation offers the Spotify tools now
 
         def failed(e):
             self.spotify_connect.setEnabled(True)
@@ -514,6 +576,8 @@ class SettingsTab(QWidget):
         self.spotify_client_id.setText(s.spotify_client_id)
         self.spotify_device.setText(s.spotify_device)
         self.spotify_ask_first.setChecked(s.spotify_ask_first)
+        self.bridge_on.setChecked(s.bridge_on)
+        self.bridge_port.setValue(s.bridge_port)
         self._fill_devices()
         self.saved_label.setText("")
 
@@ -559,6 +623,7 @@ class SettingsTab(QWidget):
         s.spotify_client_id = self.spotify_client_id.text().strip()
         s.spotify_device = self.spotify_device.text().strip()
         s.spotify_ask_first = self.spotify_ask_first.isChecked()
+        s.bridge_on, s.bridge_port = self.bridge_on.isChecked(), self.bridge_port.value()
         try:
             s.ensure_folders()
             s.save()

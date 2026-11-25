@@ -49,10 +49,10 @@ from wb_common import GOLD, MUTED, NAVY, NAVY_3, THEME  # noqa: E402
 # They have no Qt in them, so they load on a background thread while the loading window stays alive.
 HEAVY = ("rag", "voice", "agent", "invoice")
 # Then the tabs, one by one on the main thread (Qt classes), with the loading window updated between them
-STEPS = (("Brain", "tab_brain"), ("Documents", "tab_documents"), ("Experts", "tab_experts"),
-         ("Create", "tab_create"), ("Code", "tab_code"), ("Voice", "tab_voice"), ("Invoices", "tab_invoices"),
-         ("Research", "tab_research"), ("TV", "tab_tv"), ("Access", "tab_access"), ("Evaluation", "tab_eval"),
-         ("Settings", "tab_settings"), ("updates", "wb_updates"), ("main window", "wb_window"))
+STEPS = (("Brain", "tab_brain"), ("Documents", "tab_documents"), ("Create", "tab_create"), ("Code", "tab_code"),
+         ("the conversation", "tab_chat"), ("Invoices", "tab_invoices"), ("Research", "tab_research"),
+         ("My TV", "tab_tv"), ("Access", "tab_access"), ("Evaluation", "tab_eval"), ("Settings", "tab_settings"),
+         ("the VS Code bridge", "wb_bridge"), ("updates", "wb_updates"), ("main window", "wb_window"))
 
 
 def __getattr__(name):

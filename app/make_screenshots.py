@@ -1,4 +1,4 @@
-"""Screenshots of every tab for the README, made with the made-up test data (never your own).
+"""Screenshots of the conversation and every panel for the README, made with the made-up test data (never your own).
 
 Run: .venv\\Scripts\\python.exe app\\make_screenshots.py [out-folder] [--skip-research]
 Uses its own settings file and folders in a demo folder, so your settings and data are untouched.
@@ -26,9 +26,14 @@ DEMO.mkdir(parents=True)
     "invoice_inbox": str(DEMO / "Invoices" / "Inbox"),
     "invoice_output": str(DEMO / "Invoices" / "Output"),
     "reports_dir": str(DEMO / "Research reports"),
+    "creations_dir": str(DEMO / "Creations"),   # never your own pictures, songs, projects or notes
+    "code_projects_dir": str(DEMO / "Code projects"),
+    "code_roots": [str(DEMO / "Code projects")],
+    "brain_dir": str(DEMO / "Brain"),
     "speak_replies": False,
     "voice_mode": "hold",
     "check_updates_at_start": False,
+    "bridge_port": 8794,
     "tv_name": "Living room TV",
     "tv_favorites": [{"name": "News", "app": "Samsung TV Plus", "channel": "4556"},
                      {"name": "YouTube", "app": "YouTube", "channel": ""}],
@@ -53,7 +58,7 @@ main.settings.ensure_folders()
 main.settings.apply()
 os.environ.pop("VIKUNJA_TOKEN", None)
 w = main.MainWindow(main.settings)
-w.resize(1280, 820)
+w.resize(1500, 860)
 w.show()
 
 
@@ -92,11 +97,13 @@ wait(lambda: not w.invoices.queued and w.invoices.table.rowCount() + w.invoices.
 if w.invoices.review.count():
     w.invoices.review.setCurrentRow(0)
 
-step("voice")
-w.voice.run_turn(text="What is the capital of Norway?")
-wait(lambda: len(w.voice.turns) >= 2, 120)
-w.voice.run_turn(text="Och vad heter Sveriges huvudstad?")
-wait(lambda: len(w.voice.turns) >= 4, 120)
+step("conversation")
+w.chat.run_turn(text="What is the capital of Norway?")
+wait(lambda: len(w.chat.turns) >= 2 and not w.chat.is_busy, 120)
+w.chat.run_turn(text="Och vad heter Sveriges huvudstad?")
+wait(lambda: len(w.chat.turns) >= 4 and not w.chat.is_busy, 120)
+w.chat.run_turn(text="Write a Python function that checks if a number is prime.")
+wait(lambda: len(w.chat.turns) >= 6 and not w.chat.is_busy, 300)
 
 if "--skip-research" not in sys.argv:
     step("research")
@@ -109,14 +116,21 @@ w.evaluation.run_suite("invoices.yaml")
 wait(lambda: all(b.isEnabled() for b in w.evaluation.buttons) and "passed" in w.evaluation.summary.text(), 300)
 
 OUT.mkdir(parents=True, exist_ok=True)
-for i in range(w.tabs.count()):
-    w.tabs.setCurrentIndex(i)
+shots = [("conversation", None), ("documents", "documents"), ("invoices", "invoices"), ("research", "research"),
+         ("tv", "tv"), ("access", "access"), ("evaluation", "evaluation"), ("settings", "settings"),
+         ("create", "create"), ("code", "code"), ("brain", "brain")]
+for i, (name, key) in enumerate(shots):
+    if key is None:
+        w.close_panel()
+    elif key == "evaluation":
+        w.open_tab("Evaluation")
+    else:
+        w.open_panel(key)
     wait(lambda: False, 1.0)
-    name = w.tabs.tabText(i).lower()
     w.grab().save(str(OUT / f"{i}-{name}.png"))
     step(f"saved {OUT / f'{i}-{name}.png'}")
 
-w.voice.shutdown()
+w.chat.shutdown()
 w.invoices.shutdown()
 w.evaluation.shutdown()
 shutil.rmtree(DEMO, ignore_errors=True)

@@ -1,4 +1,4 @@
-"""Access tab: what the assistant may do: programs, status checks, containers, and the rules."""
+"""Access panel: what the assistant may do: programs, status checks, containers, and the rules."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt

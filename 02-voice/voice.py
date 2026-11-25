@@ -174,7 +174,7 @@ class Assistant:
     def __init__(self, chat_model: str = CHAT_MODEL, whisper_size: str = WHISPER_SIZE,
                  whisper_device: str = "auto", voices: dict[str, str] | None = None,
                  voices_dir: Path = HERE / "voices", speed: float = 1.0, volume: float = 1.0,
-                 output_device: int | None = None, extra_system: str = ""):
+                 output_device: int | None = None, extra_system: str = "", system: str | None = None):
         t = time.time()
         self.chat_model = chat_model
         self.whisper_size = whisper_size
@@ -182,7 +182,9 @@ class Assistant:
         self.voices = {lang: PiperVoice.load(Path(voices_dir) / f"{name}.onnx")
                        for lang, name in (voices or VOICES).items()}
         self.speed, self.volume, self.output_device = speed, volume, output_device
-        self.history = [{"role": "system", "content": SYSTEM + ("\n" + extra_system if extra_system else "")}]
+        base = SYSTEM if system is None else system
+        self.history = [{"role": "system", "content": base + ("\n" + extra_system if extra_system else "")}]
+        self.tokens = [0, 0]  # tokens read and written by the model in the last reply (all its rounds)
         # A timeout, so a stuck Ollama gives an error instead of waiting forever
         self.client = ollama.Client(timeout=CHAT_TIMEOUT)
         self.on_step = lambda text: None  # told about each step (e.g. "Searching the web…")
@@ -205,14 +207,18 @@ class Assistant:
                 rest.pop(0)
             self.history = self.history[:1] + rest
 
-    def _chat(self, tools: bool = True, round_no: int = 1):
+    def _chat(self, tools: dict | None = None, round_no: int = 1):
+        """One model round. tools: the tools offered (None or empty = none)."""
         with self.span("model", self.chat_model, round=round_no, messages=len(self.history),
-                       tools_offered=len(TOOLS) if tools else 0) as sp:
+                       tools_offered=len(tools or {}), tools=sorted(tools or {})) as sp:
             resp = self.client.chat(model=self.chat_model, messages=self.history,
-                                    tools=list(TOOLS.values()) if tools else None, think=False,
+                                    tools=list(tools.values()) if tools else None, think=False,
                                     options={"temperature": 0.5, "num_ctx": 16384})
             msg = resp.message
-            sp.set(**_stats(resp), answer=(msg.content or "").strip(),
+            stats = _stats(resp)
+            self.tokens[0] += stats.get("tokens_in", 0)
+            self.tokens[1] += stats.get("tokens_out", 0)
+            sp.set(**stats, answer=(msg.content or "").strip(),
                    tool_calls=[c.function.name for c in msg.tool_calls or []])
             return msg
 
@@ -233,25 +239,36 @@ class Assistant:
         lang = info.language if info.language in self.voices else "en"
         return text, lang
 
-    def reply(self, text: str, lang: str | None = None) -> str:
+    def reply(self, text: str, lang: str | None = None, tools: dict | None = None,
+              wider_tools: dict | None = None, hint: str | None = None) -> str:
+        """Answer one message. tools: the tools offered this turn (default: all of TOOLS);
+        wider_tools: offered instead if the model says it can't without trying (default: the same);
+        hint: added to the message, e.g. "(typed; reply in English)" (default: just the language)."""
+        tools = dict(TOOLS) if tools is None else tools
+        wider = wider_tools if wider_tools is not None else tools
         # Name the language each turn: otherwise the model keeps the conversation's earlier language
-        hint = {"sv": "\n\n(Svara på svenska.)", "en": "\n\n(Reply in English.)"}.get(lang or "", "")
+        if hint is None:
+            hint = {"sv": "(Svara på svenska.)", "en": "(Reply in English.)"}.get(lang or "", "")
         self._trim_history()
-        self.history.append({"role": "user", "content": text + hint})
+        self.history.append({"role": "user", "content": text + (f"\n\n{hint}" if hint else "")})
         self.last_steps = []  # (tool, arguments) used for this answer, so the screen can say where it came from
+        self.tokens = [0, 0]
         nudged = False
         for n in range(1, 7):  # room for search -> read a page or two -> CV before the spoken answer
             self.on_step("Thinking…")
             # web pages and the CV are long: the default context would cut off the conversation
-            msg = self._chat(round_no=n)
-            if not msg.tool_calls and not nudged and not self.last_steps and TOOLS \
+            msg = self._chat(tools, round_no=n)
+            if not msg.tool_calls and not nudged and not self.last_steps and (tools or wider) \
                     and REFUSAL.search(msg.content or "") \
                     and not RIGHTLY_REFUSED.search(text + " " + (msg.content or "")):
                 nudged = True  # once: a second "can't" stands, it may be true
-                with self.span("guard", "Said it can't without trying a tool: asked again",
+                widened = len(wider) > len(tools)
+                tools = wider  # it may have needed a tool this turn didn't offer
+                with self.span("guard", "Said it can't without trying a tool: asked again" +
+                               (f" with all {len(tools)} tools" if widened else ""),
                                refused=(msg.content or "").strip()):
                     pass
-                self.history.append({"role": "user", "content": NUDGE.format(tools=", ".join(TOOLS))})
+                self.history.append({"role": "user", "content": NUDGE.format(tools=", ".join(tools))})
                 continue
             if nudged and not msg.tool_calls:  # the reminder isn't part of the conversation
                 self.history = [m for m in self.history
@@ -260,7 +277,7 @@ class Assistant:
             if not msg.tool_calls:
                 return (msg.content or "").strip()
             for call in msg.tool_calls:
-                fn = TOOLS.get(call.function.name)
+                fn = tools.get(call.function.name) or TOOLS.get(call.function.name)
                 args = dict(call.function.arguments or {})
                 self.last_steps.append((call.function.name, args))
                 self.on_step(STEP_NAMES.get(call.function.name, f"Using {call.function.name}…"))
@@ -274,7 +291,7 @@ class Assistant:
         # Out of rounds: answer from what the tools returned instead of giving up
         self.history.append({"role": "user", "content": "Answer now from what you found, without more tools."})
         self.on_step("Writing the answer…")
-        msg = self._chat(tools=False, round_no=7)
+        msg = self._chat(None, round_no=7)
         self.history.append(msg)
         return (msg.content or "").strip() or "Sorry, I got stuck."
 

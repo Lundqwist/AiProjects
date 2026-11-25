@@ -1,4 +1,4 @@
-"""TV tools for the voice assistant. The model reads each function's docstring to decide when to call it."""
+"""TV tools for the assistant. The model reads each function's docstring to decide when to call it."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ def configure(settings) -> None:
 
 def _tv() -> wb_tv.SamsungTV:
     if not (_settings and _settings.tv_ip):
-        raise RuntimeError("No TV is set up yet. Use Find TV on the TV tab.")
+        raise RuntimeError("No TV is set up yet. Open My TV and use Find TV.")
     return wb_tv.SamsungTV(_settings.tv_ip, _settings.tv_mac)
 
 

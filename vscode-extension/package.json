@@ -1,0 +1,70 @@
+{
+  "name": "ai-workbench",
+  "displayName": "AI Workbench",
+  "description": "Coding help in VS Code from your own AI Workbench: local experts on your PC, no internet AI.",
+  "version": "0.1.0",
+  "publisher": "lundqwist",
+  "repository": { "type": "git", "url": "https://github.com/Lundqwist/AiProjects" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages", "Machine Learning", "Other"],
+  "keywords": ["ai", "ollama", "local", "chat", "code"],
+  "icon": "media/icon.png",
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "aiWorkbench", "title": "AI Workbench", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "aiWorkbench": [
+        { "type": "webview", "id": "aiWorkbench.chat", "name": "Chat" }
+      ]
+    },
+    "commands": [
+      { "command": "aiWorkbench.open", "title": "Open the chat", "category": "AI Workbench" },
+      { "command": "aiWorkbench.explain", "title": "Explain this code", "category": "AI Workbench" },
+      { "command": "aiWorkbench.fix", "title": "Find and fix problems in this code", "category": "AI Workbench" },
+      { "command": "aiWorkbench.tests", "title": "Write tests for this code", "category": "AI Workbench" },
+      { "command": "aiWorkbench.edit", "title": "Change this code…", "category": "AI Workbench" },
+      { "command": "aiWorkbench.newChat", "title": "New chat", "category": "AI Workbench", "icon": "$(add)" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "aiWorkbench.explain", "group": "aiWorkbench@1", "when": "editorHasSelection" },
+        { "command": "aiWorkbench.fix", "group": "aiWorkbench@2", "when": "editorHasSelection" },
+        { "command": "aiWorkbench.tests", "group": "aiWorkbench@3", "when": "editorHasSelection" },
+        { "command": "aiWorkbench.edit", "group": "aiWorkbench@4" }
+      ],
+      "view/title": [
+        { "command": "aiWorkbench.newChat", "when": "view == aiWorkbench.chat", "group": "navigation" }
+      ]
+    },
+    "keybindings": [
+      { "command": "aiWorkbench.edit", "key": "ctrl+alt+e", "when": "editorTextFocus" },
+      { "command": "aiWorkbench.open", "key": "ctrl+alt+a" }
+    ],
+    "configuration": {
+      "title": "AI Workbench",
+      "properties": {
+        "aiWorkbench.port": {
+          "type": "number",
+          "default": 8765,
+          "description": "The port of AI Workbench's VS Code bridge (AI Workbench → Settings → VS Code)."
+        },
+        "aiWorkbench.expert": {
+          "type": "string",
+          "enum": ["auto", "code", "reasoning", "writing"],
+          "default": "auto",
+          "description": "Which local expert answers. Auto picks from the question (code unless it is maths or writing)."
+        },
+        "aiWorkbench.sendOpenFile": {
+          "type": "boolean",
+          "default": true,
+          "description": "With no selection, send the open file (cut to about 12 000 characters) along with a question."
+        }
+      }
+    }
+  }
+}

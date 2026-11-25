@@ -185,8 +185,8 @@ def check_promptfoo(settings) -> list[Update]:
     path = Path(settings.promptfoo_path)
     npm = shutil.which("npm")
     if not path.exists():
-        return [Update("promptfoo", "Install promptfoo (used by the Evaluation tab)",
-                       "Only needed for the Evaluation tab.", False, "promptfoo",
+        return [Update("promptfoo", "Install promptfoo (used by Settings → Evaluation)",
+                       "Only needed for Settings → Evaluation.", False, "promptfoo",
                        manual=not npm, version="install")]
     if not npm:
         return []
@@ -195,7 +195,7 @@ def check_promptfoo(settings) -> list[Update]:
         latest = _run(["cmd", "/c", npm, "view", "promptfoo", "version"], timeout=60).stdout.strip()
         if Version(latest) > Version(have):
             return [Update("promptfoo", f"promptfoo {latest} (you have {have})",
-                           "Optional, for the Evaluation tab.", False, "promptfoo", version=latest)]
+                           "Optional, for Settings → Evaluation.", False, "promptfoo", version=latest)]
     except (OSError, subprocess.SubprocessError, IndexError, InvalidVersion):
         pass
     return []

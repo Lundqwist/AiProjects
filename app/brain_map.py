@@ -201,7 +201,7 @@ class GraphCanvas(QWidget):
         if not g or not self.visible.any():
             p.setPen(QColor(MUTED))
             p.drawText(self.rect(), Qt.AlignCenter, "Nothing in the brain yet at this moment.\n"
-                       "Tell the assistant something to remember, or add a note in the Brain tab.")
+                       "Tell the assistant something to remember, or add a note in the Brain panel.")
             return
         focus = ({self.sel} | self.nbrs[self.sel]) if self.sel else set()
         for (a, b), e, t in zip(self.edge_index, g.edges, self.edge_t):

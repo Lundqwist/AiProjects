@@ -1,4 +1,4 @@
-"""Create tab: pictures, music and stories, each saved with a note of who made it."""
+"""Create panel: pictures, music and stories, each saved with a note of who made it."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -512,7 +512,7 @@ class CreateTab(QWidget):
         wb_create.configure(settings, on_made=self.on_made)
 
     def on_made(self, made):
-        """A creation from the voice assistant (another thread): refresh the list on the GUI thread."""
+        """A creation from the assistant (another thread): refresh the list on the GUI thread."""
         from PySide6.QtCore import QTimer
         page = {"image": self.image, "music": self.music, "story": self.story, "song": self.song,
                 "movie": self.movie}[made.kind]

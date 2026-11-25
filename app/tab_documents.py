@@ -1,4 +1,4 @@
-"""Documents tab: manage the document database and ask questions with cited answers."""
+"""Documents panel: manage the document database and ask questions with cited answers."""
 from __future__ import annotations
 
 import html

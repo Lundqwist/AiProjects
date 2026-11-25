@@ -1,4 +1,4 @@
-"""Spotify tools for the voice assistant. The model reads each function's docstring to decide when
+"""Spotify tools for the assistant. The model reads each function's docstring to decide when
 to call it. Offered only when Spotify is connected (Settings → Spotify).
 
 Starting or changing music asks on screen first (like the media keys) unless the user chose

@@ -1,4 +1,4 @@
-"""Brain tab: the assistant's long-term memory. Notes, a wiki filed from them, and rules, as Markdown."""
+"""Brain panel: the assistant's long-term memory. Notes, a wiki filed from them, and rules, as Markdown."""
 from __future__ import annotations
 
 import html
@@ -97,7 +97,7 @@ class BrainTab(QWidget):
         split.setSizes([330, 770])
 
         # Bottom: where it's used, learning
-        self.in_voice = QCheckBox("Voice assistant remembers and recalls")
+        self.in_voice = QCheckBox("The assistant remembers and recalls")
         self.in_voice.setChecked(settings.brain_in_voice)
         self.in_experts = QCheckBox("Experts use it (only when answered on this PC)")
         self.in_experts.setChecked(settings.brain_in_experts)

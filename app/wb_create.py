@@ -318,7 +318,7 @@ def make_story(s: Settings, idea: str, genre: str = "", length: str = "Medium (�
 # ---- voice tools ------------------------------------------------------------------------------
 
 _settings: Settings | None = None
-_on_made = None  # set by the Create tab: shows new creations there
+_on_made = None  # set by the Create panel: shows new creations there
 
 
 def configure(s: Settings, on_made=None) -> None:
@@ -371,13 +371,18 @@ def write_story(idea: str, language: str = "English") -> str:
 
 def _in_background(kind: str, work) -> None:
     """Movies and songs take minutes: run them apart from the voice turn, open the result when done."""
+    import wb_notify
+
     def run():
         try:
-            _done(work())
+            m = work()
+            _done(m)
+            wb_notify.announce(f"The {kind} “{m.path.stem}” is ready and open. {m.credit()}", str(m.path))
         except Exception:  # noqa: BLE001 - nobody waits for this thread: log it (stderr = workbench.log)
             import traceback
             print(f"[{datetime.now():%H:%M:%S}] making a {kind} failed:", flush=True)
             traceback.print_exc()
+            wb_notify.announce(f"Making the {kind} failed; the details are in the log.")
     threading.Thread(target=run, name=f"create-{kind}", daemon=True).start()
 
 

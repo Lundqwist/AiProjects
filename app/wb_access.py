@@ -418,7 +418,7 @@ def read_text_file(path: str) -> str:
     if p.is_dir():
         return f"'{p}' is a folder: use list_folder."
     if p.suffix.lower() not in TEXT_EXT and p.name.lower() not in ("readme", "license", "dockerfile"):
-        return f"'{p.name}' isn't a text file I can read (PDFs and documents go in the Documents tab)."
+        return f"'{p.name}' isn't a text file I can read (PDFs and documents go in Documents: ask about them, or add them in its panel)."
     text = p.read_text(encoding="utf-8", errors="replace")
     return f"{p} ({_size(p.stat().st_size)}):\n" + (text[:6000] + "\n…(cut short)" if len(text) > 6000 else text)
 

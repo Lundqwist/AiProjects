@@ -65,6 +65,7 @@ s.rag_db, s.invoice_inbox = str(TMP / "db"), str(TMP / "inbox")
 s.invoice_output, s.reports_dir = str(TMP / "output"), str(TMP / "reports")
 s.brain_dir = str(TMP / "Brain")  # never the real brain
 s.speak_replies = False
+s.voice_mode = "hold"  # the microphone stays off until the wake word test feeds audio itself
 s.ensure_folders()
 s.apply()
 import wb_access  # noqa: E402
@@ -73,7 +74,8 @@ wb_access.configure(s)  # default answer to any permission question: no
 
 # Read-only PC tools: facts, folders, and never hidden or private places
 import voice as _voice  # noqa: E402
-import tab_experts as _experts  # noqa: E402
+import tab_chat as _chat  # noqa: E402
+import wb_abilities  # noqa: E402
 
 _info = json.loads(wb_access.pc_info())
 record("access: pc_info", bool(_info.get("pc_name")) and bool(_info.get("drives")), _info.get("ip_address_on_home_network", ""))
@@ -86,9 +88,30 @@ record("voice: refusal guard",
        bool(_voice.REFUSAL.search("I am an AI and do not have the capability to directly interact with your computer"))
        and bool(_voice.REFUSAL.search("Let me check your folders.")) and not _voice.REFUSAL.search("The capital is Oslo.")
        and bool(_voice.RIGHTLY_REFUSED.search("Delete everything in Downloads")))
-record("experts: PC jobs go to voice",
-       _experts.needs_voice("I cannot access your file system.") and _experts.needs_voice("```tool_code\nipconfig\n```")
-       and not _experts.needs_voice("The capital of Norway is Oslo."))
+record("chat: an expert that pretends to run things is caught",
+       bool(_chat.FAKED.search("```tool_code\nipconfig\n```")) and not _chat.FAKED.search("The capital is Oslo."))
+_on = wb_abilities.groups_for(list(wb_abilities.ABILITIES))
+_routes = {q: wb_abilities.pick(q, _on).groups for q in (
+    "Put CNN on the TV", "Sätt på CNN på tv:n", "What's on my to-do list?", "Make a song about coffee",
+    "What is the capital of Norway?", "What does my handbook say about vacation days?", "Create a website for my cat")}
+record("router: each message gets only the tool groups it needs",
+       _routes["Put CNN on the TV"] == ["expert", "tv"] and _routes["Sätt på CNN på tv:n"] == ["expert", "tv"]
+       and _routes["What's on my to-do list?"] == ["expert", "tasks"]
+       and _routes["Make a song about coffee"] == ["expert", "songs"]
+       and _routes["What is the capital of Norway?"] == ["expert"]
+       and _routes["What does my handbook say about vacation days?"] == ["expert", "documents"]
+       and _routes["Create a website for my cat"] == ["expert", "code"], str(_routes))
+record("router: a follow-up keeps the last turn's tools, switched-off abilities are never offered",
+       wb_abilities.pick("Make it longer", _on, ["songs"]).groups == ["expert", "songs"]
+       and "tv" not in wb_abilities.pick("Put CNN on the TV", [g for g in _on if g != "tv"]).groups)
+_hist = [{"role": "system", "content": "x" * 5000}] + [
+    {"role": r, "content": f"{r} {i} " + "y" * 2000} for i in range(10) for r in ("user", "assistant")] + [
+    {"role": "tool", "content": "z" * 9000}]
+_ctx = _chat.compact_context(_hist)
+record("chat: experts get a short summary of the conversation, not all of it",
+       len(_ctx) <= _chat.CONTEXT_TURNS and _ctx[0]["role"] == "user" and all(m["role"] != "tool" for m in _ctx)
+       and sum(len(m["content"]) for m in _ctx) < 4000,
+       f"{len(_ctx)} messages, {sum(len(m['content']) for m in _ctx)} of {sum(len(m['content']) for m in _hist)} chars")
 status_log = []
 status = status_log.append
 
@@ -156,16 +179,7 @@ credit = docs.chat[-1].get("credit", "") if docs.chat else ""
 record("documents: says who answered and that nothing went online",
        "on this PC" in credit and "nothing was sent online" in credit, credit.replace("\n", " ")[:120])
 
-# Experts: a code question goes to the code expert and says so; provider list saves
-from tab_experts import ExpertsTab  # noqa: E402
-
-ex = ExpertsTab(s, status)
-ex.question.setPlainText("Write a Python function that returns the square of a number. Code only.")
-ex.ask()
-wait(lambda: not ex.busy, 300)
-t = ex.turns[-1] if ex.turns else {"a": "", "credit": ""}
-record("experts: code question -> code expert, with a credit line",
-       "Code expert" in t["credit"] and "def " in t["a"], t["credit"].replace("\n", " ")[:120])
+# Online AI providers: the list saves with its limits
 tab._add_provider({"name": "Test AI", "kind": "openai", "base_url": "https://x.test/v1", "model": "m",
                    "key_env": "NO_SUCH_KEY_VAR", "monthly_tokens": 5000, "enabled": True})
 tab.save()
@@ -293,7 +307,8 @@ cd = CodeTab(s, status)
 cd.create_project("hello-cli", "A Python script hello.py that prints a greeting for the name given as argument.")
 wait(lambda: not cd.busy, 300)
 names = [c.path for c in cd.changes]
-record("code: new project proposed as files", any(n.endswith(".py") for n in names), str(names))
+record("code: new project proposed as files", any(n.endswith(".py") for n in names),
+       str(names) if names else "no files; the answer was: " + cd.result.toPlainText()[:300].replace("\n", " | "))
 cd.apply_changes()
 proj = Path(s.code_projects_dir) / "hello-cli"
 record("code: saved and opened in VS Code", any(proj.glob("*.py")) and opened == [str(proj)], str(opened))
@@ -325,13 +340,13 @@ if inv.review.count():
     record("invoices: review reason shown", "total" in inv.review_text.toPlainText(),
            inv.review_text.toPlainText().splitlines()[0] if inv.review_text.toPlainText() else "")
 
-# 4. Voice: one spoken turn from a test recording (no speakers needed)
+# 4. The conversation: spoken and typed turns in one conversation (no speakers needed)
 import voice  # noqa: E402
 
-from tab_voice import VoiceTab  # noqa: E402
+from tab_chat import ChatTab  # noqa: E402
 
 wav = ROOT / "02-voice" / "test-audio" / "q-sv.wav"
-vt = VoiceTab(s, status)
+vt = ChatTab(s, status)
 if wav.exists():
     vt.run_turn(audio=voice.load_wav(str(wav)))
     ok = wait(lambda: len(vt.turns) >= 2, 180)
@@ -344,6 +359,34 @@ vt.run_turn(text="Say hello in five words or fewer.")
 ok = wait(lambda: len(vt.turns) >= 4, 120)
 reply = vt.turns[-1][1] if ok else ""
 record("voice: typed English after Swedish gets English", ok and "hej" not in reply.lower(), reply)
+# Typed questions that need no tools go straight to the expert that fits, and the conversation goes on
+vt.run_turn(text="Write a Python function that returns the square of a number. Code only.")
+ok = wait(lambda: len(vt.turns) >= 6 and not vt.is_busy, 300)
+reply, info = (vt.turns[-1][1], vt.turns[-1][2]) if ok else ("", "")
+record("chat: a typed code question goes straight to the code expert, with who answered",
+       ok and "Code expert" in info and "def " in reply and "tokens in" in info, info[:140])
+vt.run_turn(text="Now make it return the cube instead.")
+ok = wait(lambda: len(vt.turns) >= 8 and not vt.is_busy, 300)
+cube = vt.turns[-1][1].replace(" ", "") if ok else ""
+record("chat: the follow-up to an expert answer keeps the context",
+       ok and any(c in cube for c in ("**3", "x*x*x", "pow(")) and "def" in cube, vt.turns[-1][1][:120].replace("\n", " "))
+# A typed question about the user's documents uses the Documents ability's tool
+vt.run_turn(text="What does my handbook say about how many vacation days employees get?")
+ok = wait(lambda: len(vt.turns) >= 10 and not vt.is_busy, 300)
+used = [n for n, _ in getattr(vt.bot, "last_steps", [])]
+record("chat: a question about your documents is answered from them", ok and "ask_my_documents" in used
+       and "30" in vt.turns[-1][1], f"tools {used} · {vt.turns[-1][1][:80]}")
+info = vt.turns[-1][2]
+record("chat: a turn is offered only some of the tools, and says so", "tools offered" in info and
+       int(re.search(r"(\d+) of (\d+) tools", info).group(1)) < int(re.search(r"(\d+) of (\d+) tools", info).group(2)),
+       info[-80:])
+# A background job (a song, a movie, a report) tells the conversation when it is done
+import wb_notify  # noqa: E402
+
+wb_notify.announce("The song “Test” is ready and open.")
+ok = wait(lambda: vt.turns[-1][1] == "The song “Test” is ready and open.", 5)
+record("chat: finished background jobs appear in the conversation", ok and
+       any(m.get("content") == "The song “Test” is ready and open." for m in vt.bot.history if isinstance(m, dict)))
 audio, rate = vt.bot.synth("Testing the voice.", "en")
 record("voice: speech synthesis", len(audio) > rate * 0.5, f"{len(audio) / rate:.1f}s at {rate} Hz, speed 1.25")
 
@@ -353,18 +396,18 @@ real_set_step = vt._set_step
 vt._set_step = lambda text: (steps.append(text), real_set_step(text))
 vt.run_turn(text="What is two plus two?")
 shown = wait(lambda: vt.is_busy, 5)
-ok = wait(lambda: len(vt.turns) >= 6 and not vt.is_busy, 120)
+ok = wait(lambda: len(vt.turns) >= 13 and not vt.is_busy, 120)
 record("voice: busy bar shows steps and hides when done", shown and ok and "Thinking…" in steps,
        f"steps {list(dict.fromkeys(steps))}, state '{vt.state.text()}'")
 
-# Brain in the voice assistant: recalls what it was told, and remembers new things
+# Brain in the conversation: recalls what it was told, and remembers new things
 vt.run_turn(text="What is my dog called?")
-ok = wait(lambda: len(vt.turns) >= 8 and not vt.is_busy, 180)
+ok = wait(lambda: len(vt.turns) >= 15 and not vt.is_busy, 180)
 used = [n for n, _ in getattr(vt.bot, "last_steps", [])]
 record("voice: recalls from the brain", ok and "pixel" in vt.turns[-1][1].lower() and "recall" in used,
        f"{vt.turns[-1][1][:80]} · tools {used}")
 vt.run_turn(text="Please remember that my sister Anna's birthday is on the third of March.")
-ok = wait(lambda: len(vt.turns) >= 10 and not vt.is_busy, 180)
+ok = wait(lambda: len(vt.turns) >= 17 and not vt.is_busy, 180)
 wait(lambda: not wb_brain.busy(), 300)
 used = [n for n, _ in getattr(vt.bot, "last_steps", [])]
 record("voice: remembers into the brain", ok and "remember" in used and "Anna" in wiki_text(),
@@ -375,21 +418,22 @@ import wb_trace  # noqa: E402
 from ai_activity import AiActivityWindow  # noqa: E402
 
 runs = wb_trace.runs()
-spoken = next((r for r in runs if r.source == "voice" and any(sp.kind == "stt" for sp in r.spans)), None)
+spoken = next((r for r in runs if r.source == "chat" and any(sp.kind == "stt" for sp in r.spans)), None)
 kinds = [sp.kind for sp in spoken.spans] if spoken else []
 model = next((sp for sp in spoken.spans if sp.kind == "model"), None) if spoken else None
 record("activity: a spoken question is recorded as speech to text, recall and model steps",
-       bool(spoken) and "stt" in kinds and "model" in kinds and spoken.title != "Voice: (listening)" and
+       bool(spoken) and "stt" in kinds and "model" in kinds and spoken.title != "Chat: (listening)" and
        bool(model and model.detail.get("tokens_out")), f"{spoken.title if spoken else '-'}: {kinds}")
-dog = next((r for r in runs if "dog" in r.title.lower() and r.source == "voice"), None)
+dog = next((r for r in runs if "dog" in r.title.lower() and r.source == "chat"), None)
 recall = next((sp for sp in dog.spans if sp.kind == "recall"), None) if dog else None
 record("activity: the brain recall step says which pages it used",
        bool(recall and any("wiki/" in x for x in recall.detail.get("sources", []))),
        str(recall.detail.get("sources") if recall else "no recall step"))
-expert_run = next((r for r in runs if r.source == "experts"), None)
-record("activity: an Experts answer shows who was chosen and why",
+expert_run = next((r for r in runs if r.source == "chat" and any(sp.kind == "route" and "Straight to" in sp.name
+                                                                 for sp in r.spans)), None)
+record("activity: an expert answer shows who was chosen and why",
        bool(expert_run) and any(sp.kind == "route" and sp.detail.get("why") for sp in expert_run.spans),
-       str([(sp.kind, sp.name) for sp in expert_run.spans] if expert_run else "no experts run"))
+       str([(sp.kind, sp.name) for sp in expert_run.spans] if expert_run else "no expert run"))
 record("activity: filing a note runs on its own, with the writing expert inside",
        any(r.source == "filing" and any(sp.kind == "model" for sp in r.spans) for r in runs),
        str(sorted({r.source for r in runs})))
@@ -410,7 +454,7 @@ import threading  # noqa: E402
 
 release = threading.Event()
 stuck_bot = vt.bot
-stuck_bot.reply = lambda text, lang=None: (release.wait(60), "too late")[1]
+stuck_bot.reply = lambda text, lang=None, **kw: (release.wait(60), "too late")[1]
 vt.run_turn(text="This one gets stuck.")
 wait(lambda: vt.is_busy and vt.pending == 1, 5)
 time.sleep(1)
@@ -514,6 +558,67 @@ ev = EvalTab(s, status)
 ev.run_suite("invoices.yaml")
 ok = wait(lambda: all(b.isEnabled() for b in ev.buttons) and "passed" in ev.summary.text(), 240)
 record("evaluation: invoices suite", ok and ev.summary.text().startswith("5 of 5"), ev.summary.text())
+
+# 7. The VS Code bridge: answers this PC with the token only, and the extension package builds
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
+
+import wb_bridge  # noqa: E402
+import wb_vscode_ext  # noqa: E402
+
+s.bridge_port = 8796
+br = wb_bridge.Bridge(s)
+br.start()
+
+
+def bridge_get(headers):
+    try:
+        with urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8796/api/health", headers=headers),
+                                    timeout=10) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+tok = {"Authorization": f"Bearer {wb_bridge.token()}"}
+record("vs code bridge: answers with the token, refuses without it and from web pages",
+       bridge_get(tok) == 200 and bridge_get({}) == 401 and bridge_get({**tok, "Origin": "https://x.example"}) == 403)
+body = json.dumps({"messages": [{"role": "user", "content": "What does sq(4) return?"}],
+                   "context": {"file": "sq.py", "language": "python", "selection": "def sq(x):\n    return x * x\n"}})
+with urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8796/api/chat", body.encode(),
+                            {**tok, "Content-Type": "application/json"}), timeout=300) as r:
+    events = [json.loads(l) for l in r.read().decode().splitlines() if l.strip()]
+answer = "".join(e.get("text", "") for e in events if e["type"] == "text")
+record("vs code bridge: the code expert answers on this PC, streamed", "16" in answer and events[-1]["type"] == "done"
+       and "on this PC" in events[-1]["by"], f"{events[-1].get('by')}: {answer[:60]}")
+br.stop()
+import zipfile  # noqa: E402
+
+vsix = wb_vscode_ext.build(TMP)
+names = zipfile.ZipFile(vsix).namelist()
+record("vs code extension: package builds", {"extension.vsixmanifest", "extension/package.json",
+                                             "extension/extension.js", "extension/media/chat.js"} <= set(names),
+       vsix.name)
+
+# 8. The window: abilities, the conversation and every panel open beside it
+import wb_window  # noqa: E402
+
+s.check_updates_at_start = False  # an updates dialog would wait for a click
+w = wb_window.MainWindow(s)
+w.show()
+opened = []
+for key in w.panels:
+    w.open_panel(key)
+    app.processEvents()
+    opened.append(w.panel_area.stack.currentWidget() is w.panels[key][1] and w.panel_area.isVisible())
+w.abilities.boxes["tv"].setChecked(False)
+off = "tv" not in wb_abilities.enabled(s) and "tv" not in w.chat.on_groups()
+w.abilities.boxes["tv"].setChecked(True)
+record("window: every panel opens beside the conversation; Access and Evaluation are in Settings",
+       all(opened) and w.settings_panel.indexOf(w.access) >= 0 and w.settings_panel.indexOf(w.evaluation) >= 0,
+       str(dict(zip(w.panels, opened))))
+record("window: switching an ability off takes its tools away", off)
+w.close()
 
 vt.shutdown()
 inv.shutdown()

@@ -337,7 +337,7 @@ def _with_identity(messages: list[dict], model: str) -> list[dict]:
     return [{"role": "system", "content": note}] + messages
 
 
-def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: float) -> tuple[str, bool]:
+def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: float) -> tuple[str, bool, tuple]:
     model = expert_model(s, key)
     messages = _with_identity(messages, model)
     extra = {}
@@ -351,7 +351,7 @@ def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: fl
             msg = resp.message
             text = _strip_think(msg.content or "")
             sp.set(**wb_trace.ollama_stats(resp), answer=text)
-            return text, bool(getattr(msg, "thinking", None))
+            return text, bool(getattr(msg, "thinking", None)), _tokens(resp)
         out, thought, last, n = [], False, None, 0
         for part in client.chat(model=model, messages=messages, options=opts, stream=True, **extra):
             last = part
@@ -369,7 +369,11 @@ def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: fl
                     sp.set(state="writing", answer="".join(out))
         text = _strip_think("".join(out))
         sp.set(**(wb_trace.ollama_stats(last) if last else {}), state="done", answer=text)
-        return text, thought
+        return text, thought, _tokens(last)
+
+
+def _tokens(resp) -> tuple[int, int]:
+    return (getattr(resp, "prompt_eval_count", 0) or 0, getattr(resp, "eval_count", 0) or 0) if resp else (0, 0)
 
 
 def _strip_think(text: str) -> str:
@@ -442,9 +446,9 @@ def ask(s: Settings, messages: list[dict], *, task: str = "chat", expert: str | 
     wb_trace.event("route", f"{EXPERTS[key].name} on this PC", why=why or "it fits the question",
                    online=("none had tokens left" if go else "not wanted for this job") if s.online_mode != "off"
                    else "turned off in Settings", notes=list(notes))
-    text, thought = _local(s, key, messages, on_text, temperature)
+    text, thought, tokens = _local(s, key, messages, on_text, temperature)
     model = expert_model(s, key)
-    return Answer(text, f"{EXPERTS[key].name} ({model})", "on this PC", why, False, (0, 0), notes, thought)
+    return Answer(text, f"{EXPERTS[key].name} ({model})", "on this PC", why, False, tokens, notes, thought)
 
 
 # ---- online pictures --------------------------------------------------------------------------
@@ -505,7 +509,7 @@ def any_image_provider(s: Settings) -> bool:
     return any(p.get("image_model") and p.get("kind") == "openai" for p in s.online_providers or [])
 
 
-# ---- a tool for the voice assistant -----------------------------------------------------------
+# ---- a tool for the assistant -----------------------------------------------------------------
 
 _settings: Settings | None = None
 
@@ -528,7 +532,7 @@ def ask_expert(question: str, kind: str = "auto") -> str:
     s = _settings or Settings.load()
     kind = (kind or "auto").lower()
     msgs = [{"role": "system", "content": "Answer clearly and correctly. Keep it short unless asked for more. "
-                                          "The voice assistant on the user's PC asks you this and does any "
+                                          "The assistant on the user's PC asks you this and does any "
                                           "actions on the PC itself: just answer the question, and don't say "
                                           "what you can or can't do on the PC."},
             {"role": "user", "content": question}]
@@ -541,7 +545,7 @@ TOOLS = {"ask_expert": ask_expert}
 
 
 def describe_steps(steps: list[tuple[str, dict]]) -> str:
-    """'searched the web for “x” · read svt.se · asked the code expert' from the voice assistant's tool calls."""
+    """'searched the web for “x” · read svt.se · asked the code expert' from the assistant's tool calls."""
     names = {"web_search": "searched the web", "read_page": "read", "read_my_cv": "read your CV",
              "ask_expert": "asked", "open_tasks": "read your Vikunja tasks", "create_image": "made a picture",
              "create_music": "made music", "write_story": "wrote a story", "make_song": "started a song",

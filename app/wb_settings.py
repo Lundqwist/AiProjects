@@ -65,12 +65,12 @@ class Settings:
     invoice_output: str = str(DATA / "Invoices" / "Output")
     reports_dir: str = str(DATA / "Research reports")
     creations_dir: str = str(DATA / "Creations")          # Images, Music and Stories inside
-    code_projects_dir: str = str(DATA / "Code projects")  # new projects made in the Code tab
+    code_projects_dir: str = str(DATA / "Code projects")  # the work folder: Code panel, experts and the assistant
     code_roots: list = field(default_factory=lambda: [str(DATA / "Code projects"), str(ROOT.parent)])  # voice may open these
     brain_dir: str = str(DATA / "Brain")                  # long-term memory as Markdown (wb_brain.py)
 
     # Brain
-    brain_in_voice: bool = True       # the voice assistant can remember and recall, and follows the rules
+    brain_in_voice: bool = True       # the assistant can remember and recall, and follows the rules
     brain_in_experts: bool = True     # Experts answers use the rules and related notes (only when answered locally)
     brain_learn_daily: bool = True    # turn repeated corrections into rules once a day
     brain_last_learned: str = ""
@@ -99,7 +99,7 @@ class Settings:
     wake_word: str = "Hey Luna"       # any word or phrase; two words trigger by mistake less often
     wake_at_start: bool = False       # (old; replaced by voice_mode)
     wake_chime: bool = True           # play a chime when the wake word is heard
-    voice_mode: str = "hold"          # wake (Hey Luna), conversation, hold (hold to talk); remembered
+    voice_mode: str = "wake"          # wake (Hey Luna), conversation, hold (hold to talk); starts in Hey Luna
     conversation_idle: int = 60       # conversation mode ends after this many seconds of silence
 
     # Integrations
@@ -117,10 +117,18 @@ class Settings:
     spotify_device: str = ""          # preferred device name; empty = this PC
     spotify_ask_first: bool = True    # ask on screen before playing or changing music
 
-    # What the assistant may do (wb_access.py). Filled in the Access tab; nothing personal in the code.
+    # What the assistant may do (wb_access.py). Filled in Settings → Access; nothing personal in the code.
     allowed_programs: list = field(default_factory=list)    # Start-menu names it may open freely
     status_targets: list = field(default_factory=list)      # [{"name", "host", "port"}]
     allowed_containers: list = field(default_factory=list)  # [{"name", "host"}]; host = an ssh alias
+
+    # Abilities (wb_abilities.py): which ones the assistant may use; missing keys count as on
+    abilities: dict = field(default_factory=dict)
+    panel_open: str = ""              # the tool panel shown beside the conversation ("" = none)
+
+    # VS Code bridge (wb_bridge.py): the extension talks to this program on 127.0.0.1 only
+    bridge_on: bool = True
+    bridge_port: int = 8765
 
     # Evaluation
     promptfoo_path: str = field(default_factory=_promptfoo)

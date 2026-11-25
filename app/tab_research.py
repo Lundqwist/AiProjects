@@ -1,4 +1,4 @@
-"""Research tab: ask a question, watch the agent's steps, read and check the cited report."""
+"""Research panel: ask a question, watch the agent's steps, read and check the cited report."""
 from __future__ import annotations
 
 from pathlib import Path

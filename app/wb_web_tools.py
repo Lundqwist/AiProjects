@@ -1,4 +1,4 @@
-"""Web and CV tools for the voice assistant: search the web, read a page, read the user's CV.
+"""Web and CV tools for the assistant: search the web, read a page, read the user's CV.
 
 All read-only. Search uses DuckDuckGo (ddgs, no key), pages are read with trafilatura, the same
 way 04-research does it. The CV is the public page on lundqwist.se, cached for an hour.

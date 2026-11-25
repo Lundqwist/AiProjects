@@ -1,4 +1,4 @@
-"""Invoices tab: add invoices, process the inbox (once or by watching it), see results and reviews."""
+"""Invoices panel: add invoices, process the inbox (once or by watching it), see results and reviews."""
 from __future__ import annotations
 
 import csv

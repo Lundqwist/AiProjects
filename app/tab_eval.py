@@ -1,4 +1,4 @@
-"""Evaluation tab: run the promptfoo test suites and show pass/fail per test and model."""
+"""Evaluation panel: run the promptfoo test suites and show pass/fail per test and model."""
 from __future__ import annotations
 
 import json

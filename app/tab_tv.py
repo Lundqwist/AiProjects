@@ -1,4 +1,4 @@
-"""TV tab: find the TV, power, favourites (like CNN on Samsung TV Plus), apps, and a remote."""
+"""My TV panel: find the TV, power, favourites (like CNN on Samsung TV Plus), apps, and a remote."""
 from __future__ import annotations
 
 from PySide6.QtCore import QThreadPool, QTimer, Qt
@@ -218,7 +218,7 @@ class TvTab(QWidget):
     def save_favorites(self):
         self.s.tv_favorites = [f for f in (self._row(r) for r in range(self.favs.rowCount())) if f["name"]]
         self.s.save()
-        self.log.setText(f"Saved {len(self.s.tv_favorites)} favourite(s). The voice assistant knows them too.")
+        self.log.setText(f"Saved {len(self.s.tv_favorites)} favourite(s). The assistant knows them too.")
 
     def watch_selected(self):
         rows = sorted({i.row() for i in self.favs.selectedIndexes()})

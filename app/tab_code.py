@@ -1,4 +1,4 @@
-"""Code tab: new projects, explanations, reviews and changes by the code expert, opened in VS Code."""
+"""Code panel: new projects, explanations, reviews and changes by the code expert, opened in VS Code."""
 from __future__ import annotations
 
 import html

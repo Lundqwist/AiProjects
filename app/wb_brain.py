@@ -761,7 +761,7 @@ def tidy_page(title: str, emit=lambda m: None) -> int:
     return len(facts) - len(out)
 
 
-# ---- tools for the voice assistant -------------------------------------------------------------
+# ---- tools for the assistant -------------------------------------------------------------------
 
 
 def remember_tool(fact: str) -> str:

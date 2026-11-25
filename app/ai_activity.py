@@ -90,7 +90,7 @@ class FlowView(QWidget):
         p.fillRect(self.rect(), QColor(NAVY))
         if not self.run:
             p.setPen(QColor(MUTED))
-            p.drawText(self.rect(), Qt.AlignCenter, "No AI work yet. Ask the voice assistant or an expert something,\n"
+            p.drawText(self.rect(), Qt.AlignCenter, "No AI work yet. Ask something in the conversation,\n"
                                                     "and each step it takes shows up here as it happens.")
             return
         if not self.boxes:
