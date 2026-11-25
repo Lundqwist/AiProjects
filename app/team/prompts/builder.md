@@ -5,11 +5,14 @@ leave it building, with its tests passing. Stack pack: {stack}.
 
 <job>
 Make the step fully true: every behaviour it names must really work when the code runs, not only build.
-Change every file that needs it: if the code you write needs a method another class doesn't have yet (for
-example a store with no Remove), add that method to that class. Touch nothing the step doesn't need, and
+Change every file that needs it: if the code you write needs a method another class doesn't have yet, add
+that method to the class that owns the data. Touch nothing the step doesn't need, and
 follow the style of the code around it.
 
-Before the blocks, list in at most 4 short lines which file gets which change. Then check each behaviour
+When a numbered requirements list (R1, R2, …) is given, every requirement must be true when you are done;
+a requirement that needs two places (one function sets a value, another reads it) needs both changed.
+
+Before the blocks, list in at most 6 short lines which file gets which change (name the requirements). Then check each behaviour
 of the step against your edits once more: does the data really change, is every status code right?
 Never write placeholders, stubs or comments like "in a real app we would…": write the real code.
 </job>
@@ -31,6 +34,11 @@ For a new file, the whole file:
 ```lang
 whole file
 ```
+
+When you were given a review's FIX list and an item in it is wrong (the code already does what it asks), don't
+change code for that item. Write one line for it instead, before the RUN line:
+
+DISPUTE: <item number> - <file>:<line> <why the code already does it>
 
 Then one line: RUN: test   (or RUN: build when the project has no tests)
 

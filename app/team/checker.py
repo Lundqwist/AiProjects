@@ -1,0 +1,165 @@
+"""The Checker: judges one finished step, as a different model from the Builder. It never edits code.
+
+The program runs the build and tests itself first (the Builder's word isn't taken for it): if they fail, the
+verdict is FIX with the errors, without asking a model. Otherwise the Checker model gets the job, the step, the
+Scout's requirements, the diff of the step and the changed files whole (an omission, such as a function that
+should have changed and didn't, can't be seen in a diff alone), and answers requirement by requirement:
+
+    R1: DONE - src/cart.js:41 rounds every amount
+    R3: MISSING - shipping() ignores the code, so FREESHIP still charges 49
+    VERDICT: FIX
+    FIX list:
+    1. src/cart.js:30 - shipping() doesn't look at cart.code - return 0 when the code is FREESHIP
+
+A PASS with a requirement marked MISSING or WRONG counts as FIX: the program holds the model to its own list.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from team import edits, jobs, llm, runner
+from wb_settings import Settings
+
+PROMPT = (Path(__file__).resolve().parent / "prompts" / "checker.md").read_text(encoding="utf-8")
+FILES_CHARS = 30000
+DIFF_CHARS = 20000
+
+REQ_LINE = re.compile(r"^\s*\**\s*R(\d+)\s*\**\s*[:.)-]\s*\**\s*(DONE|MISSING|WRONG|PARTIAL|UNCLEAR)\**\s*[-:–—]?\s*(.*)$",
+                      re.I | re.M)
+# "VERDICT: PASS | FIX | ASK" is the template copied, not a verdict (Day 4): the line must hold one word only
+VERDICT = re.compile(r"^\s*\**\s*VERDICT\s*\**\s*:\s*\**\s*(PASS|FIX|ASK)\b\**\s*\.?\s*$", re.I | re.M)
+FIX_ITEM = re.compile(r"^\s*(\d+)[.)]\s+(.+)$", re.M)
+ASK_LINE = re.compile(r"^\s*\**\s*ASK\s*\**\s*(?:\(.*?\))?\s*:\s*(.+)$", re.I | re.M)
+
+
+@dataclass
+class Verdict:
+    verdict: str                     # PASS, FIX, ASK
+    reasons: list[str] = field(default_factory=list)
+    fix_list: list[str] = field(default_factory=list)
+    question: str = ""
+    requirements: dict[int, tuple[str, str]] = field(default_factory=dict)  # n: (state, note)
+    checks: str = ""                 # the program's own build/test report
+    raw: str = ""
+    by: str = ""                     # "the checks" or the model
+
+    def fix_text(self) -> str:
+        """What the Builder gets for its next round."""
+        out = [f"The Checker ({self.by}) found:"]
+        out += [f"{i}. {f}" for i, f in enumerate(self.fix_list, 1)] or [f"- {r}" for r in self.reasons]
+        if self.checks and self.by == "the checks":
+            out.append("\n" + self.checks)
+        return "\n".join(out)
+
+
+def step_diff(repo: Path, since: str) -> str:
+    d = jobs.git(repo, "diff", "--no-color", "--unified=3", f"{since}..HEAD", check=False)
+    return d if len(d) <= DIFF_CHARS else d[:DIFF_CHARS] + "\n…(diff cut here)"
+
+
+def changed_files(repo: Path, since: str) -> list[str]:
+    return [f for f in jobs.git(repo, "diff", "--name-only", f"{since}..HEAD", check=False).splitlines() if f.strip()]
+
+
+def files_text(repo: Path, files: list[str]) -> str:
+    """Changed files whole, code before tests, with line numbers (the FIX list points at lines)."""
+    order = sorted(files, key=lambda f: (edits.looks_like_test(f), f))
+    parts, total = [], 0
+    for rel in order:
+        p = repo / rel
+        if not p.exists():
+            parts.append(f"--- {rel} (deleted) ---")
+            continue
+        try:
+            lines = p.read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
+        except (UnicodeDecodeError, OSError):
+            continue
+        body = "\n".join(f"{n:>4}| {ln}" for n, ln in enumerate(lines, 1))
+        if total + len(body) > FILES_CHARS:
+            parts.append(f"--- {rel} (left out: too long) ---")
+            continue
+        parts.append(f"--- {rel} ---\n{body}")
+        total += len(body)
+    return "\n\n".join(parts)
+
+
+def parse(reply: str, n_requirements: int) -> Verdict:
+    text = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
+    m = VERDICT.search(text)
+    v = Verdict(m.group(1).upper() if m else "", raw=reply)
+    for rm in REQ_LINE.finditer(text):
+        v.requirements[int(rm.group(1))] = (rm.group(2).upper(), rm.group(3).strip())
+    after = text[text.lower().find("fix list"):] if "fix list" in text.lower() else ""
+    if after:
+        stop = re.search(r"^\s*\**\s*ASK\b", after, re.I | re.M)
+        v.fix_list = [i.group(2).strip() for i in FIX_ITEM.finditer(after[:stop.start()] if stop else after)]
+    am = ASK_LINE.search(text)
+    if am and am.group(1).strip().lower() not in ("none", "-", "n/a"):
+        v.question = am.group(1).strip()
+    bad = {n: note for n, (state, note) in v.requirements.items() if state != "DONE"}
+    if v.verdict == "PASS" and bad:           # held to its own list
+        v.verdict = "FIX"
+        v.reasons.append("the Checker said PASS but marked requirements as not done")
+    if v.verdict == "" and bad:               # a requirement not done is a FIX, verdict line or not
+        v.verdict = "FIX"
+    if v.verdict == "FIX" and not v.fix_list:
+        v.fix_list = [f"R{n}: {note or 'not done'}" for n, note in sorted(bad.items())]
+    if v.verdict == "" and n_requirements and len(v.requirements) >= n_requirements and not bad:
+        v.verdict = "PASS"                    # every requirement DONE, verdict line forgotten
+    if v.verdict == "ASK" and not v.question:
+        v.question = "The Checker wants your view but didn't say on what; see its answer in the job folder."
+    v.reasons += [f"R{n} {s}: {note}" for n, (s, note) in sorted(v.requirements.items()) if s != "DONE"]
+    return v
+
+
+def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since: str, *,
+          ask_fn: runner.AskFn | None = None, round_no: int = 1, last_fix: list[str] | None = None,
+          disputes: list[str] | None = None) -> Verdict:
+    """`last_fix` = this Checker's FIX list from the last round; `disputes` = the items the Builder says were
+    wrong, with its reasons. The Checker reads the code again for those and decides."""
+    repo = job.repo.resolve()
+    results = job.run("build", ask_fn=ask_fn)
+    if all(r.ok for r in results):
+        results += job.run("test", ask_fn=ask_fn)
+    report = runner.report(results, "build and test") if results else "No project has a build or test action."
+    if results and not all(r.ok for r in results):
+        v = Verdict("FIX", ["the build or tests fail when the Checker runs them"], checks=report, by="the checks")
+        job.log(f"Checker · round {round_no} · FIX (the checks fail)", report)
+        return v
+    card = job.card()
+    files = changed_files(repo, since)
+    reqs = "\n".join(f"R{i}. {r}" for i, r in enumerate(requirements, 1)) or "(none listed: judge against the step)"
+    user = (f"Job: {card.title}\n" + (f"Goal: {card.goal}\n" if card.goal else "") + f"\nStep:\n{step}\n\n"
+            f"Requirements:\n{reqs}\n\nYour own run of the build and tests:\n{report}\n\n"
+            f"The step's diff:\n```diff\n{step_diff(repo, since) or '(no changes)'}\n```\n\n"
+            f"The changed files as they are now (line numbers on the left):\n\n{files_text(repo, files)}")
+    if last_fix:
+        user += ("\n\nYour FIX list from the last round was:\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(last_fix, 1)))
+    if disputes:
+        user += ("\n\nThe Builder disputes these items and changed no code for them:\n"
+                 + "\n".join(f"- {d}" for d in disputes)
+                 + "\nRead those lines again. If the Builder is right, mark the requirement DONE. If not, keep it "
+                   "MISSING or WRONG and say exactly which input gives the wrong result.")
+    v = Verdict("")
+    folder = job.folder / "checker"
+    folder.mkdir(exist_ok=True)
+    for attempt in (1, 2):
+        # the second try answers without thinking: an empty first answer means it thought past its budget
+        a = llm.ask(s, "checker", PROMPT, user if attempt == 1 else
+                    user + "\n\nAnswer now, in exactly the asked form: one line per requirement, then VERDICT.",
+                    max_tokens=24000 if attempt == 1 else 6000, temperature=0.1, think=attempt == 1)
+        v = parse(a.text, len(requirements))
+        v.by = llm.model_for(s, "checker")
+        name = f"{len(list(folder.glob('*.md'))) + 1:02d}-round-{round_no}" + ("" if attempt == 1 else "-retry")
+        (folder / f"{name}.md").write_text(v.raw or "(empty answer)", encoding="utf-8")
+        if v.verdict:
+            break
+    if not v.verdict:
+        v.verdict, v.question = "ASK", "The Checker's answer couldn't be read twice; look at the diff yourself."
+    v.checks = report
+    job.log(f"Checker · round {round_no} · {v.verdict}",
+            "\n".join(v.reasons + [f"{i}. {f}" for i, f in enumerate(v.fix_list, 1)]
+                      + ([f"ASK: {v.question}"] if v.verdict == "ASK" else [])) or "all requirements done")
+    return v

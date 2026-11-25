@@ -356,7 +356,7 @@ def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: fl
     model = expert_model(s, key)
     messages = _with_identity(messages, model)
     extra = {}
-    if model.startswith(THINKERS):
+    if model.startswith(THINKERS) and "coder" not in model:  # qwen3-coder can't think: Ollama refuses the flag
         extra["think"] = key == "reasoning"  # the reasoning expert thinks first; others answer at once
     client = ollama.Client(timeout=1800)  # big local jobs are slow, and that is fine
     opts = {"temperature": temperature, "num_ctx": context_size(messages, max_tokens), "num_predict": max_tokens}

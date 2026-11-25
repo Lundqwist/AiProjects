@@ -7,6 +7,8 @@ r"""Command line for the coding team's jobs and Runner (until the Lead runs them
     .venv\Scripts\python.exe app\team\cli.py run <job> restore          (asks in this window first)
     .venv\Scripts\python.exe app\team\cli.py card <job>
     .venv\Scripts\python.exe app\team\cli.py build <job> "Add GET /api/items/{id} with 404"   (the Builder)
+    .venv\Scripts\python.exe app\team\cli.py scout <job> "Add GET /api/items/{id} with 404"   (what it would need)
+    .venv\Scripts\python.exe app\team\cli.py team <job> --goal "..." --step "..." --step "..."   (the whole team)
 
 <job> is the job folder, its repo folder or anything inside it.
 Actions: restore, build, test, lint, typecheck. Ask-first actions ask here, typed y; with no one at the
@@ -39,6 +41,11 @@ def ask_here(title: str, text: str, buttons: list[str]) -> str:
     return buttons[0] if reply in ("y", "yes") else buttons[-1]
 
 
+def _text(arg: str) -> str:
+    """A step given in words, or @path to read it from a file."""
+    return Path(arg[1:]).read_text(encoding="utf-8").strip() if arg.startswith("@") else arg
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -59,6 +66,15 @@ def main() -> int:
     b.add_argument("step", help="what to do, in words (or @file.md to read it from a file)")
     b.add_argument("--tries", type=int, default=3)
     b.add_argument("--no-commit", action="store_true")
+    sc = sub.add_parser("scout", help="show what the Scout would hand the Builder for a step (writes nothing)")
+    sc.add_argument("job")
+    sc.add_argument("step", help="what to do, in words (or @file.md)")
+    t = sub.add_parser("team", help="the whole team on the job card's steps: Start gate, Scout, Builder, Checker, "
+                                    "review.md")
+    t.add_argument("job")
+    t.add_argument("--goal", help="set the job card's goal first")
+    t.add_argument("--step", action="append", default=[], help="add a step to the job card first (repeatable; "
+                                                               "@file.md reads it from a file)")
     a = ap.parse_args()
 
     if a.cmd == "new":
@@ -82,9 +98,40 @@ def main() -> int:
         for s in steps:
             flags = (" [asks first]" if s.ask else "") + (f" [needs restore: {s.missing}]" if s.missing else "")
             print(f"{s.project.rel(job.repo)}: {' '.join(s.command)}  (limit {s.timeout} s){flags}")
+    elif a.cmd == "scout":
+        from team import builder, edits, scout
+        step = _text(a.step)
+        card = job.card()
+        protected = edits.protected_tests(job.repo, job.client_files(), builder.test_project_dirs(job.repo))
+        stack = (card.stack or "web").split(",")[0].strip()
+        pack = scout.scout(Settings.load(), job.repo, step, builder.repo_files(job.repo), protected,
+                           title=card.title, goal=card.goal, stack=stack, stack_notes=runner.pack_notes(stack))
+        print(pack.for_prompt() or "(no requirements)")
+        print("\nFiles:", ", ".join(pack.files) or "none")
+        if pack.problems:
+            print("Problems:", "; ".join(pack.problems))
+        return 0 if pack.ok else 1
+    elif a.cmd == "team":
+        from team import loop
+        import wb_code
+        card = job.card()
+        if a.goal:
+            card.goal = a.goal
+        card.steps += [jobs.Step(_text(x)) for x in a.step]
+        job.save_card(card)
+        if not card.steps:
+            print("The job card has no steps: add them with --step.")
+            return 1
+        out = loop.run_job(Settings.load(), job, ask_fn=ask_here,
+                           on_event=lambda t, d: print(f"· {t}: {d}", flush=True),
+                           open_review=lambda j: wb_code.open_in_vscode(j.repo))
+        for st in out.steps:
+            print(f"\n{st.status.upper()}: {st.step.splitlines()[0]}\n{st.message}")
+        print(f"\nJob {out.status}." + (f" Review: {out.review}" if out.review else ""))
+        return 0 if out.status == "done" else 1
     elif a.cmd == "build":
         from team import builder
-        step = Path(a.step[1:]).read_text(encoding="utf-8") if a.step.startswith("@") else a.step
+        step = _text(a.step)
         r = builder.build_step(job, step, ask_fn=ask_here, max_tries=a.tries, commit=not a.no_commit,
                                on_event=lambda t, d: print(f"· {t}: {d}", flush=True))
         print(f"\n{r.status.upper()}: {r.message}")

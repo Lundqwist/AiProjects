@@ -107,7 +107,8 @@ and reference notes the models get so they don't invent APIs.
 - **Input:** job card, step, diff, Runner results (it runs the checks again itself).
 - **Output:** a verdict with reasons; for FIX, a numbered list with file and line.
 - **Great work:** no PASS on code that doesn't build or doesn't do the step; no FIX about matters of taste.
-- **Model:** `deepseek-r1:8b`. On purpose a different model from the Builder, so they don't share blind spots.
+- **Model:** `qwen3:8b` with thinking (Day 4 trial; `deepseek-r1:8b` gave empty answers). On purpose a different
+  model from the Builder, so they don't share blind spots: the Builder's own model passed its own miss.
 
 ## 4. Copy-paste prompts
 
@@ -433,6 +434,43 @@ What it took to get there (each found by reading the runs, not guessed):
    steps are the Builder's own. Edits to the client's tests were refused in 2 of the 3 cart runs and the Builder went
    on without them, as meant.
 
+## Day 4 results (2026-11-25)
+
+The whole team, end to end (`bakeoff.py --pipeline team --tries 1`): the hidden checks run only once the team says
+it is done, and nobody gives it their output. Builder `qwen3-coder:30b`, Scout `qwen2.5-coder:7b`, Checker
+`qwen3:8b`. Last run, 3 runs per job:
+
+| Job | Passed end to end | What happened in the others |
+|---|---|---|
+| web-01 todo API | **3/3** (also 3/3 in each of the 2 runs before) | - |
+| web-02 shop cart | **1/3** (1/3 in each of the 2 runs before as well; before Day 4: never) | one false PASS that missed 1 of 16 checks (`code` is `undefined`, not `null`, without a code); one honest stop: the team reported the FIX items it couldn't resolve instead of handing over |
+
+**Not yet "both pass every time".** Web-01 is reliable. The cart job now passes sometimes, and when it doesn't,
+the team usually says so; the remaining risk is a Checker PASS that misses a small detail.
+
+What the runs showed (each found by reading the job folders):
+
+1. **The Builder's own model can't check its work.** As Checker, `qwen3-coder:30b` passed the code that ignored
+   FREESHIP in `shipping()`, twice, in 8-20 s: the same blind spot as when it wrote the code. `deepseek-r1:8b`
+   thought for ~4 minutes and gave empty answers. `qwen3:8b` (thinking) caught it both times. Checker: `qwen3:8b`.
+2. **No Scout model placed a requirement in the function whose result it changes** (0 of 9 runs, 7B, 8B and
+   30B): the task lists FREESHIP under `applyCode`, so they all placed it there. The program now links any
+   function a requirement names (`shipping`) as a place, without a model: 6 of 6 runs then pointed the Builder at
+   `shipping()`. Constants (`SHIPPING`) aren't linked.
+3. **The Checker accepted evidence about something else** ("shipping is 0 when the subtotal is over 500" for
+   FREESHIP). Its prompt now demands the line that does *this* requirement, copied.
+4. **A thinking model can think past its budget and return nothing** (`qwen3:8b`, 2 of 3 runs). It gets 24,000
+   tokens now, and an empty or unreadable answer is retried at once without thinking.
+5. **DISPUTE was an escape hatch**: a refused fix plus two disputes counted as done, and one dispute even agreed
+   with the Checker. Now a try with a refused edit never passes (refusals of the client's tests excepted), and
+   disputes are accepted only in the first FIX round.
+6. **A runaway reply**: 71 repeated edit blocks in 4 minutes. Repeated and no-op blocks are dropped, more than 30
+   blocks applies nothing, and the Builder's answer is capped at 8,000 tokens.
+7. **"VERDICT: PASS | FIX | ASK"** (the template copied) was read as PASS. Only a one-word verdict counts now.
+8. `wb_ai` sent `think` to `qwen3-coder`, which Ollama refuses: "coder" models never get the flag now.
+9. My first prompts used the golden jobs' own answers as examples ("a store with no Remove", "a free-shipping
+   threshold is not a FREESHIP code"). Removed: examples come from other domains, so the scores mean something.
+
 ## START HERE FIRST
 
 **Day 1 is done** (2026-11-25): context overflow and file parser fixed, Git for Windows installed, two web golden
@@ -470,9 +508,25 @@ jobs and the bake-off written, Builder model chosen (`qwen3-coder:30b`, see Day 
 - `cli.py build <job> "<step>"`; `bakeoff.py --pipeline builder`.
 - Tests: `app\test_builder.py` (26 checks, fake model, no GPU), `app\test_team.py` (33), `app\test_wb_code.py` (9).
 
-**Next: Day 4.** Scout + Checker + the full loop + Start/review gates. Done when both web golden jobs pass end to
-end. The cart job is the test: the Scout must hand the Builder `shipping()` as well as `summary()`, and the Checker
-must catch a code that doesn't change shipping. Inside the app, call `wb_create.make_room()` before the Builder
-(not from the CLI: it would unload the model the CLI is about to use).
+**Day 4 is done, with the cart job not yet reliable** (2026-11-25; see Day 4 results):
+
+- `app\team\scout.py` + `prompts\scout.md`: a repository map (every file with its functions, classes, constants
+  and endpoints by line), the Scout's JSON (requirements, places, files), paths matched to real files, and
+  `link_named` (a function a requirement names becomes a place).
+- `app\team\checker.py` + `prompts\checker.md`: the program runs build and tests first (failing = FIX, no model);
+  then the Checker reads the step's diff and the changed files whole, one line per requirement, held to its own
+  list (a PASS with a MISSING requirement is a FIX). Reads the Builder's disputes in the next round.
+- `app\team\loop.py`: `run_job` = Start gate (on screen) → per step Scout → Builder → commit → Checker, at most 2 FIX
+  rounds → `review.md` (branch, requirements as last judged, commits, checks, questions) → Review gate (asks before
+  opening VS Code). `run_step` for one step.
+- `app\team\llm.py`: every team role on this PC with its own model (`team_scout_model`, `team_checker_model` in
+  settings; the Builder is `code_model`).
+- Job cards keep steps of several lines. `cli.py scout` and `cli.py team`; `bakeoff.py --pipeline team`.
+- Tests: `app\test_loop.py` (26 checks), `test_builder.py` (31), `test_team.py` (34), `test_wb_code.py` (9).
+
+**Before Day 5, decide:** more work on the cart job's reliability (ideas: the Checker runs a small probe per
+requirement instead of only reading; a second Checker opinion on PASS), or go on to the Lua pack and come back
+with more golden jobs. Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would
+unload the model the CLI is about to use).
 
 Still wanted from you: one small real client task (no names needed) for Day 7.

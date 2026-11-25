@@ -56,10 +56,12 @@ class Step:
     status: str = "todo"     # todo, building, checking, pass, fix, ask, failed
 
     def line(self, n: int) -> str:
+        """One numbered line; a step of several lines continues on lines indented by 4 spaces."""
         mark = {"pass": "x", "todo": " "}.get(self.status, "~")
         check = f" - check: {self.check}" if self.check else ""
         tag = "" if self.status in ("todo", "pass") else f" ({self.status})"
-        return f"{n}. [{mark}] {self.text}{check}{tag}"
+        first, *rest = self.text.split("\n")
+        return f"{n}. [{mark}] {first}{check}{tag}" + "".join(f"\n    {r}" if r.strip() else "\n    ." for r in rest)
 
 
 @dataclass
@@ -102,6 +104,8 @@ class JobCard:
                 section = line.rstrip(":")
             elif section == "Acceptance checks" and line.startswith("- ") and line != "- (none yet)":
                 card.checks.append(line[2:].strip())
+            elif section == "Steps" and raw.startswith("    ") and card.steps:
+                card.steps[-1].text += "\n" + ("" if raw.strip() == "." else raw[4:])
             elif section == "Steps":
                 m = re.match(r"\d+\.\s*(?:\[(.)\]\s*)?(.*?)(?:\s+-\s+check:\s*(.*?))?(?:\s+\((\w+)\))?$", line)
                 if m:

@@ -60,6 +60,9 @@ tests, up to 3 tries per round; restores of the golden jobs' own packages are al
 .\.venv\Scripts\python.exe 05-eval\golden-jobs\bakeoff.py --models qwen3-coder:30b --pipeline builder --repeat 3
 ```
 
+`--pipeline team` runs the whole coding team (Scout, Builder, Checker with FIX rounds) and checks only when the
+team says it is done; use `--tries 1` for the end-to-end score. Day 4 (2026-11-25): todo API 3/3, cart 1/3.
+
 ## Results
 
 | Run | RAG | Invoices |

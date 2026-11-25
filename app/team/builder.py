@@ -27,6 +27,7 @@ CONTEXT_CHARS = 60000
 FILE_CHARS = 20000
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "composer.lock", "packages.lock.json"}
 MAX_TRIES = 3
+MAX_EDITS = 30   # more blocks than this in one reply: the model is repeating itself
 
 Event = Callable[[str, str], None]   # (title, detail): progress for a screen or a terminal
 
@@ -49,6 +50,7 @@ class BuildResult:
     message: str = ""           # for the person (and, later, the Checker)
     commit: str = ""
     new_files: list[str] = field(default_factory=list)
+    disputes: list[str] = field(default_factory=list)   # FIX items the Builder says are wrong
     changed_files: list[str] = field(default_factory=list)
 
     @property
@@ -76,6 +78,19 @@ def test_project_dirs(repo: Path) -> set[str]:
             if runner._is_test_project(runner.Project(p.pack, p.kind, c)):
                 dirs.add(c.parent.relative_to(repo).as_posix())
     return dirs
+
+
+SMALL_REPO = 30000  # a repository this small (characters of source) is shown whole, whatever the Scout picked
+
+
+def shown_files(repo: Path, files: list[str], picked: list[str] | None) -> list[str]:
+    """The Scout's files first; the rest too when the repository is small (a file the Scout missed is the most
+    common way to fail, and a small repository costs little to show whole)."""
+    if not picked:
+        return files
+    size = sum((repo / f).stat().st_size for f in files if (repo / f).exists())
+    first = [f for f in picked if f in files]
+    return first + [f for f in files if f not in first] if size <= SMALL_REPO else first
 
 
 def context_pack(repo: Path, files: list[str], protected: set[str]) -> tuple[str, list[str]]:
@@ -171,8 +186,9 @@ def _feedback(outcomes: list[edits.Outcome], parsed: edits.Parsed, results: list
 
 def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: runner.AskFn | None = None,
                fix_list: str = "", max_tries: int = MAX_TRIES, on_event: Event | None = None,
-               commit: bool = True) -> BuildResult:
-    """Make `step` true in the job's repository. `fix_list` = what a review found wrong last time."""
+               commit: bool = True, pack=None, commit_message: str = "", allow_disputes: bool = True) -> BuildResult:
+    """Make `step` true in the job's repository. `fix_list` = what a review found wrong last time.
+    `pack` = the Scout's ContextPack (requirements, places, files), when there is one."""
     s = s or Settings.load()
     on_event = on_event or (lambda t, d: None)
     repo = job.repo.resolve()
@@ -196,17 +212,23 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
     ever_applied = False
     for n in range(1, max_tries + 1):
         files = repo_files(repo)
-        pack, ctx_notes = context_pack(repo, files, client_tests)
+        shown = shown_files(repo, files, pack.files if pack else None)
+        text, ctx_notes = context_pack(repo, shown, client_tests)
+        hidden = [f for f in files if f not in shown]
+        if hidden:
+            ctx_notes.append("not shown (the Scout didn't pick them): " + ", ".join(hidden[:40]))
         own_tests = {f for f in files if f not in received and edits.looks_like_test(f, test_project_dirs(repo))}
         user = (f"Job: {card.title}\n" + (f"Goal: {card.goal}\n" if card.goal else "")
-                + f"\nStep:\n{step}\n\nThe repository's files (current state):\n\n{pack}"
+                + f"\nStep:\n{step}\n"
+                + (f"\n{pack.for_prompt()}\n" if pack and pack.requirements else "")
+                + f"\nThe repository's files (current state):\n\n{text}"
                 + (f"\n\n({'; '.join(ctx_notes)})" if ctx_notes else "")
                 + (f"\n\nThis is try {n} of {max_tries}. What happened on the last try:\n\n{feedback}" if feedback else ""))
         on_event(f"Try {n} of {max_tries}", f"asking {wb_ai.expert_model(s, 'code')} for edits")
         started = time.monotonic()
         try:
             a = wb_ai.ask(s, [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                          task="code", expert="code", big=False, temperature=0.2, max_tokens=12000)
+                          task="code", expert="code", big=False, temperature=0.2, max_tokens=8000)
             reply = a.text
         except Exception as e:  # noqa: BLE001 - a model crash is a failed try, written to the log
             reply = ""
@@ -217,6 +239,14 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         result.tries.append(rec)
 
         parsed = edits.parse(reply)
+        if len(parsed.edits) > MAX_EDITS:
+            parsed.problems.append(f"the reply had {len(parsed.edits)} edit blocks, so it ran away (repeated "
+                                   "itself) and nothing was applied. Write each change once, in a few blocks")
+            parsed.edits = []
+        if parsed.disputes and not allow_disputes:
+            parsed.problems.append("DISPUTE isn't accepted in this round: the Checker has read your dispute and "
+                                   "still finds the problem. Change the code")
+            parsed.disputes = []
         if parsed.needs_approval:
             result.status = "ask"
             result.message = "The Builder needs a new package, which needs your OK:\n" + "\n".join(
@@ -227,16 +257,27 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         rec.applied = [o.edit.path for o in outcomes if o.ok]
         rec.refused = [f"{o.edit.path}: {o.why.splitlines()[0]}" for o in outcomes if not o.ok]
         ever_applied |= bool(rec.applied)
-        on_event(f"Try {n}: {len(rec.applied)} edits applied, {len(rec.refused)} refused", "building and testing")
-        results, stop = _checks(job, ask_fn, on_event) if rec.applied or ever_applied else ([], None)
+        if fix_list and parsed.disputes:
+            result.disputes = parsed.disputes   # the last try's disputes go to the Checker's next round
+        # in a FIX round, disputing every item (no edits) is a real answer: the Checker decides on it next
+        answered = ever_applied or bool(fix_list and parsed.disputes)
+        on_event(f"Try {n}: {len(rec.applied)} edits applied, {len(rec.refused)} refused"
+                 + (f", {len(parsed.disputes)} disputed" if parsed.disputes else ""), "building and testing")
+        results, stop = _checks(job, ask_fn, on_event) if answered else ([], None)
         rec.checks = runner.report(results, "build and test") if results else ""
-        job.log(f"Builder · try {n} · {seconds:.0f} s · {len(rec.applied)} applied, {len(rec.refused)} refused",
-                edits.report(outcomes) + (f"\n\n{rec.checks}" if rec.checks else ""))
+        job.log(f"Builder · try {n} · {seconds:.0f} s · {len(rec.applied)} applied, {len(rec.refused)} refused"
+                + (f", {len(parsed.disputes)} disputed" if parsed.disputes else ""),
+                edits.report(outcomes) + "".join(f"\nDISPUTE: {d}" for d in parsed.disputes)
+                + (f"\n\n{rec.checks}" if rec.checks else ""))
         if stop:
             result.status, result.message = "ask", stop
             break
         unfinished = edits.placeholders(outcomes)
-        rec.ok = ever_applied and bool(results) and all(r.ok for r in results) and not unfinished
+        # a refused edit is a change the Builder meant and didn't get: no pass on top of it (Day 4: a refused fix
+        # plus two disputes counted as done). Refusing an edit to the client's tests is meant, and doesn't count.
+        missed = [o for o in outcomes if not o.ok and o.edit.path not in client_tests]
+        rec.ok = (answered and bool(results) and all(r.ok for r in results) and not unfinished and not missed
+                  and not (len(outcomes) == 0 and parsed.problems and not parsed.disputes))
         if rec.ok:
             result.status = "pass"
             break
@@ -257,7 +298,7 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         if commit and result.changed_files:
             jobs.git(repo, "add", "-A")
             jobs.git(repo, "-c", "user.name=AI Workbench Builder", "-c", "user.email=workbench@localhost",
-                     "commit", "--quiet", "-m", f"Builder: {step.splitlines()[0][:72]}")
+                     "commit", "--quiet", "-m", commit_message or f"Builder: {step.splitlines()[0][:72]}")
             result.commit = jobs.git(repo, "rev-parse", "--short", "HEAD")
     elif result.status == "failed":
         last = result.tries[-1] if result.tries else None

@@ -136,6 +136,11 @@ card = jobs.JobCard("Add booking page", "Acme", "web", "Customers can book a tim
                     ["Which opening hours?"])
 back = jobs.JobCard.from_markdown(card.to_markdown())
 check("a job card survives Markdown", back == card, f"{back}")
+multi = jobs.JobCard("Cart", steps=[jobs.Step("Two changes:\n\n1. **Bug:** rounding\n   - indented detail", "", "fix"),
+                                     jobs.Step("Second")])
+back = jobs.JobCard.from_markdown(multi.to_markdown())
+check("a step of several lines (blank and indented lines too) survives Markdown", back == multi,
+      f"{back.steps!r}")
 empty = jobs.JobCard.from_markdown(jobs.JobCard("Only a title").to_markdown())
 check("an empty job card survives Markdown", empty == jobs.JobCard("Only a title"), f"{empty}")
 

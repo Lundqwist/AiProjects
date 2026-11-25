@@ -77,6 +77,12 @@ check("a new file's content is the code block", p.edits[3].replace == "export co
 p = edits.parse("<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n=== FILE: x.js ===\n```js\ncut off")
 check("a block without a header and a cut-off file are reported, not guessed",
       not p.edits and len(p.problems) == 2, str(p.problems))
+block = "=== EDIT: a.js ===\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\n"
+p = edits.parse(block * 3 + "=== EDIT: a.js ===\n<<<<<<< SEARCH\nz\n=======\nz\n>>>>>>> REPLACE\n"
+                "DISPUTE: 2 - a.js:4 already returns 0\n")
+check("repeated blocks and blocks that change nothing are dropped and reported; DISPUTE is read",
+      len(p.edits) == 1 and len(p.problems) == 2 and p.disputes == ["2 - a.js:4 already returns 0"],
+      f"{len(p.edits)} {p.problems} {p.disputes}")
 check("NEEDS_APPROVAL is read", edits.parse("NEEDS_APPROVAL: dayjs for date maths").needs_approval
       == ["dayjs for date maths"])
 
@@ -202,6 +208,42 @@ check("a step that doesn't pass stops after its tries, not committed",
       r.status == "failed" and len(r.tries) == 2 and not r.commit and "src/sum.js" in r.changed_files, r.message)
 check("its own new test failing is named as the Builder's", "files you wrote: test/sum-more.test.js" in prompts[1],
       prompts[1][-800:])
+
+# a FIX round: an edit that misses plus disputes is not a pass; disputes in a later round aren't accepted
+jobs.git(job.repo, "checkout", "-q", "--", ".")
+miss = ("=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\nnot in the file\n=======\nx\n>>>>>>> REPLACE\n"
+        "DISPUTE: 1 - src/sum.js:1 already adds\nRUN: test")
+answers = [miss, miss]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Fix it", s, max_tries=2, fix_list="1. src/sum.js:1 - wrong")
+finally:
+    wb_ai.ask = real_ask
+check("a refused edit plus a dispute is not a pass", r.status == "failed" and len(r.tries) == 2, r.status)
+answers = ["DISPUTE: 1 - src/sum.js:1 already adds\nRUN: test"]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Fix it", s, max_tries=1, fix_list="1. src/sum.js:1 - wrong")
+    r2_answers_ok = r.ok and r.disputes == ["1 - src/sum.js:1 already adds"]
+    answers = ["DISPUTE: 1 - src/sum.js:1 already adds\nRUN: test"]
+    prompts.clear()
+    r2 = builder.build_step(job, "Fix it", s, max_tries=1, fix_list="1. src/sum.js:1 - wrong", allow_disputes=False)
+finally:
+    wb_ai.ask = real_ask
+check("disputing every item, with no edits, answers a first FIX round (the Checker decides next)", r2_answers_ok,
+      f"{r.status} {r.disputes}")
+check("a dispute in a later round isn't accepted", r2.status == "failed" and not r2.disputes, r2.status)
+many = "".join(f"=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\nline{i}\n=======\nx{i}\n>>>>>>> REPLACE\n" for i in range(40))
+answers = [many]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Runaway", s, max_tries=1)
+finally:
+    wb_ai.ask = real_ask
+check("a runaway reply (40 blocks) applies nothing", r.status == "failed" and not r.tries[0].applied, r.message)
 
 answers = ["NEEDS_APPROVAL: lodash for sums"]
 prompts.clear()

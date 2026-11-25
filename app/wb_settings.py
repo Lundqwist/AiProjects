@@ -50,6 +50,10 @@ class Settings:
     code_model: str = "qwen2.5-coder:7b"
     reasoning_model: str = "deepseek-r1:8b"
     writing_model: str = "gemma3:12b"
+    # The coding team (team\): the Builder is the code expert; these two read and judge
+    team_scout_model: str = "qwen2.5-coder:7b"
+    team_checker_model: str = "qwen3:8b"   # thinks first; deepseek-r1:8b gave empty answers, and the Builder's
+    #                                         own model shared its blind spots (Day 4 trial)
 
     # Online AI for larger jobs, used while it has tokens. Keys stay in environment variables.
     online_mode: str = "big"          # off, big (larger jobs only), always

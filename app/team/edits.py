@@ -35,6 +35,7 @@ REPLACE = re.compile(r"^\s*>{5,}\s*REPLACE\s*$")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 RUN = re.compile(r"^\s*RUN\s*:\s*(\w+)\s*$", re.I | re.M)
 NEEDS = re.compile(r"^\s*NEEDS_APPROVAL\s*:\s*(.+)$", re.I | re.M)
+DISPUTE = re.compile(r"^\s*\**DISPUTE\**\s*:\s*(.+)$", re.I | re.M)
 
 SECRET_FILES = (".env", ".env.*", "*.pem", "*.key", "*.pfx", "*.p12", "*.snk", "id_rsa*", "id_ed25519*",
                 "secrets.json", "*.keystore", "*.jks", "credentials*", "*.author.p12")
@@ -56,6 +57,7 @@ class Parsed:
     edits: list[Edit] = field(default_factory=list)
     run: list[str] = field(default_factory=list)        # actions asked for with RUN:
     needs_approval: list[str] = field(default_factory=list)
+    disputes: list[str] = field(default_factory=list)    # review items the Builder says are wrong, with why
     problems: list[str] = field(default_factory=list)   # blocks that couldn't be read
 
 
@@ -127,8 +129,25 @@ def parse(reply: str) -> Parsed:
             i = k + 1
             continue
         i += 1
+    # a model that starts repeating itself writes the same block again and again (71 blocks, 4 minutes, Day 4)
+    seen, kept, repeats, noops = set(), [], 0, 0
+    for e in out.edits:
+        key = (e.path, e.search, e.replace, e.new_file)
+        if key in seen:
+            repeats += 1
+        elif not e.new_file and e.search == e.replace:
+            noops += 1
+        else:
+            seen.add(key)
+            kept.append(e)
+    out.edits = kept
+    if repeats:
+        out.problems.append(f"{repeats} repeated blocks were dropped (each change once is enough)")
+    if noops:
+        out.problems.append(f"{noops} blocks changed nothing (REPLACE was the same as SEARCH) and were dropped")
     out.run = [a.lower() for a in RUN.findall(reply)]
     out.needs_approval = [n.strip() for n in NEEDS.findall(reply)]
+    out.disputes = [d.strip() for d in DISPUTE.findall(reply)]
     return out
 
 
