@@ -57,12 +57,33 @@ def vscode() -> str | None:
     return None
 
 
-def open_in_vscode(path: str | Path, file: str | Path | None = None) -> None:
+def code_cli() -> tuple[list[str], dict]:
+    """(the command that runs VS Code's `code` CLI, its environment), without cmd.exe.
+
+    code.cmd is a batch file, and cmd /c mangles quoted paths: with VS Code in "Microsoft VS Code" and a
+    file in "AI Workbench", it ran 'C:\\Users\\...\\Microsoft' and failed. So do what code.cmd does:
+    run Code.exe as Node on its cli.js (its folder is named after the VS Code version, so it is read
+    from code.cmd each time)."""
     code = vscode()
     if not code:
         raise RuntimeError("Visual Studio Code was not found. Install it from code.visualstudio.com.")
-    args = ["cmd", "/c", code, str(path)] + (["--goto", str(file)] if file else [])
-    wb_lifecycle.start_independent(args, creationflags=wb_lifecycle.NO_WINDOW)
+    env = {k: v for k, v in os.environ.items() if k != "VSCODE_DEV"}
+    p = Path(code)
+    if p.suffix.lower() == ".cmd":
+        text = p.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'"%~dp0([^"]*?Code(?: - Insiders)?\.exe)"\s+"%~dp0([^"]*?cli\.js)"', text, re.I)
+        if m:
+            exe, cli = (p.parent / m.group(1)).resolve(), (p.parent / m.group(2)).resolve()
+            if exe.exists() and cli.exists():
+                env["ELECTRON_RUN_AS_NODE"] = "1"
+                return [str(exe), str(cli)], env
+    return [code], env  # an unusual install: run it as it is
+
+
+def open_in_vscode(path: str | Path, file: str | Path | None = None) -> None:
+    cli, env = code_cli()
+    args = cli + [str(path)] + (["--goto", str(file)] if file else [])
+    wb_lifecycle.start_independent(args, env=env, creationflags=wb_lifecycle.NO_WINDOW)
 
 
 def project_files(folder: Path) -> list[Path]:

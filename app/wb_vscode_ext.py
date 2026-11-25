@@ -90,15 +90,15 @@ def build(out_dir: Path | None = None) -> Path:
 
 def installed_version() -> str | None:
     """The version VS Code has installed, or None (asks `code --list-extensions --show-versions`)."""
-    code = wb_code.vscode()
-    if not code:
+    if not wb_code.vscode():
         return None
     info = package_info()
     want = f"{info['publisher']}.{info['name']}".lower()
     try:
-        out = subprocess.run(["cmd", "/c", code, "--list-extensions", "--show-versions"], capture_output=True,
-                             text=True, timeout=60, creationflags=wb_lifecycle.NO_WINDOW).stdout
-    except (OSError, subprocess.SubprocessError):
+        cli, env = wb_code.code_cli()
+        out = subprocess.run(cli + ["--list-extensions", "--show-versions"], capture_output=True, text=True,
+                             timeout=60, env=env, creationflags=wb_lifecycle.NO_WINDOW).stdout
+    except (OSError, RuntimeError, subprocess.SubprocessError):
         return None
     for line in out.splitlines():
         ext, _, version = line.strip().partition("@")
@@ -109,14 +109,12 @@ def installed_version() -> str | None:
 
 def install(emit=lambda m: None) -> str:
     """Build and install the extension. Returns what happened, for the screen."""
-    code = wb_code.vscode()
-    if not code:
-        raise RuntimeError("Visual Studio Code was not found. Install it from code.visualstudio.com first.")
+    cli, env = wb_code.code_cli()  # says so if VS Code isn't installed
     emit("Building the extension…")
     vsix = build()
     emit("Installing it in VS Code…")
-    r = subprocess.run(["cmd", "/c", code, "--install-extension", str(vsix), "--force"], capture_output=True,
-                       text=True, timeout=180, creationflags=wb_lifecycle.NO_WINDOW)
+    r = subprocess.run(cli + ["--install-extension", str(vsix), "--force"], capture_output=True, text=True,
+                       timeout=180, env=env, creationflags=wb_lifecycle.NO_WINDOW)
     text = (r.stdout + r.stderr).strip()
     if r.returncode != 0 or "error" in text.lower() and "successfully" not in text.lower():
         raise RuntimeError(text or f"code --install-extension ended with {r.returncode}")
