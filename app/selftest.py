@@ -596,6 +596,13 @@ import zipfile  # noqa: E402
 
 vsix = wb_vscode_ext.build(TMP)
 names = zipfile.ZipFile(vsix).namelist()
+import wb_code  # noqa: E402
+
+if wb_code.vscode():  # code.cmd through cmd /c broke on the spaces in "Microsoft VS Code" and "AI Workbench"
+    cli, _env = wb_code.code_cli()
+    record("vs code: its command line runs without cmd.exe, so paths with spaces work",
+           cli[0].lower().endswith("code.exe") and cli[-1].lower().endswith("cli.js")
+           and all(Path(c).exists() for c in cli), str(cli))
 record("vs code extension: package builds", {"extension.vsixmanifest", "extension/package.json",
                                              "extension/extension.js", "extension/media/chat.js"} <= set(names),
        vsix.name)
