@@ -74,6 +74,10 @@ v = checker.parse("R1: DONE - fine\nR2: DONE - fine", 2)
 check("Checker: every requirement DONE without a verdict line is PASS", v.verdict == "PASS")
 v = checker.parse("R1: DONE - fine\nVERDICT: ASK\nASK: The client asked for kr, should totals show öre?", 1)
 check("Checker: ASK with its question", v.verdict == "ASK" and "öre" in v.question)
+v = checker.parse("R1: DONE - x\nVERDICT: FIX\nFIX list:\n" + "".join(f"{i}. a.lua:3 - same - same\n" for i in range(1, 300))
+                  + "300. b.lua:1 - fine (already correct) - no change needed\n301. c.lua:2 - real - fix it\n", 1)
+check("Checker: a runaway FIX list is cut to its different items, 'no change needed' items dropped",
+      v.fix_list == ["a.lua:3 - same - same", "c.lua:2 - real - fix it"], str(v.fix_list[:5]))
 v = checker.parse("R1: DONE - fine\nR2: MISSING - no null\nVERDICT: PASS | FIX | ASK", 2)
 check("Checker: the copied template line is not a PASS", v.verdict == "FIX" and v.fix_list == ["R2: no null"],
       f"{v.verdict} {v.fix_list}")
@@ -112,6 +116,7 @@ def fake_ask(s, messages, **kw):
 
 s = Settings()
 s.online_mode = "off"
+s.team_probes = False   # the probes have their own tests below
 real_ask = wb_ai.ask
 wb_ai.ask = fake_ask
 try:
@@ -184,6 +189,75 @@ finally:
 check("only the Builder's own test fails: the model is asked which is wrong, and its PASS becomes FIX",
       seen and "Tests the Builder wrote itself fail: test/own.test.js" in seen[0] and v.verdict == "FIX"
       and "test/own.test.js fails" in v.fix_list[0], f"{v.verdict} {v.fix_list}")
+
+# ---- Checker probes -----------------------------------------------------------------------------
+
+from team import probes, runner  # noqa: E402
+
+check("probes are placed next to the client's tests, named so their runner finds them",
+      probes.place(["src/a.js", "test/cart.test.js"]) == ("test/cart.test.js", "test/checker-probe.test.js")
+      and probes.place(["JunkSeller.lua", "tests/run.lua", "tests/wow.lua", "tests/sell_test.lua"])
+      == ("tests/sell_test.lua", "tests/checker_probe_test.lua")
+      and probes.place(["Api/Program.cs", "Api.Tests/ListTests.cs"]) == ("Api.Tests/ListTests.cs", "Api.Tests/CheckerProbeTests.cs")
+      and probes.place(["src/a.js"]) is None)
+lua_out = runner.Result("test", "x", "luajit", False, 1, 0.1,
+                        "ok - R1 empty slots\nnot ok - R2 keep toggles\n    tests/x.lua:5: expected 'Keeping 1'\n"
+                        "ok - R3 summary\nnot ok - R3 summary without silver\n    expected '2g 3c'\nok - grey items sold")
+node_out = runner.Result("test", "x", "npm", False, 1, 0.1, "✔ R1 rounds (1ms)\n✖ R4 FREESHIP makes shipping 0 (2ms)\n"
+                         "  AssertionError: 49 !== 0\n✔ adds")
+net_out = runner.Result("test", "x", "dotnet", False, 1, 0.1,
+                        "  Passed TodoApi.Tests.CheckerProbeTests.R1_Get_returns_200 [3 ms]\n"
+                        "  Failed TodoApi.Tests.CheckerProbeTests.R2_Delete_removes [4 ms]\n  Error Message:\n   Expected 404")
+check("probe results are read per requirement from lua, node and dotnet output (one failing case fails it)",
+      probes.outcomes([lua_out])[:2] == ([1], [2, 3]) and probes.outcomes([node_out])[:2] == ([1], [4])
+      and probes.outcomes([net_out])[:2] == ([1], [2]) and "expected 'Keeping 1'" in probes.outcomes([lua_out])[2])
+
+PROBE = ("```js\nconst test = require('node:test');\nconst assert = require('node:assert');\n"
+         "const { sum } = require('../src/sum');\ntest('R1 adds', () => assert.strictEqual(sum(2, 3), 5));\n"
+         "test('R2 no arguments gives 0', () => assert.strictEqual(sum(), 1));\n```")
+asked_probe: list[str] = []
+answers_c = ["R1: DONE - fine\nR2: DONE - defaults\nVERDICT: PASS",
+             "R1: DONE - fine\nR2: DONE - defaults\nP2: PROBE-WRONG - sum() is 0, the probe expects 1\nVERDICT: PASS",
+             "R1: DONE - fine\nR2: DONE - defaults\nVERDICT: PASS"]
+
+
+def fake_probe(s_, m, **k):
+    system, user = m[0]["content"], m[-1]["content"]
+    if "test writer" in system:
+        asked_probe.append(user)
+        return wb_ai.Answer(PROBE, "probe", "here")
+    return wb_ai.Answer(answers_c.pop(0), "checker", "here")
+
+
+jobs.git(job.repo, "rm", "-q", "test/own.test.js")
+(job.repo / "src" / "sum.js").write_text("exports.sum = (a = 0, b = 0) => a + b;\n", encoding="utf-8")
+jobs.git(job.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "fixed")
+sp = Settings()
+sp.online_mode = "off"
+sp.team_probes = True   # off by default since Day 5b; these tests switch them on
+state: dict = {}
+wb_ai.ask = fake_probe
+try:
+    v1 = checker.check(sp, job, "sum adds", ["sum adds", "sum() is 0"], jobs.git(job.repo, "rev-parse", "HEAD~1"),
+                       probe_state=state)
+    v2 = checker.check(sp, job, "sum adds", ["sum adds", "sum() is 0"], jobs.git(job.repo, "rev-parse", "HEAD~1"),
+                       probe_state=state, round_no=2)
+    v3 = checker.check(sp, job, "sum adds", ["sum adds", "sum() is 0"], jobs.git(job.repo, "rev-parse", "HEAD~1"),
+                       probe_state=state, round_no=3)
+finally:
+    wb_ai.ask = real_ask
+check("the probe writer got the requirements and the client's example test, not the Builder's code",
+      len(asked_probe) == 1 and "R2. sum() is 0" in asked_probe[0] and "test/sum.test.js" in asked_probe[0]
+      and "a = 0, b = 0" not in asked_probe[0], asked_probe[0][:600] if asked_probe else "")
+check("a failing probe the Checker didn't explain turns its PASS into FIX, with the probe for the Builder",
+      v1.verdict == "FIX" and any(f.startswith("R2 (sum() is 0)") for f in v1.fix_list)
+      and "R2 no arguments gives 0" in v1.fix_text(), f"{v1.verdict} {v1.fix_list}")
+check("the probe is never left in the repository; a copy is kept", not (job.repo / "test" / "checker-probe.test.js").exists()
+      and (job.folder / "checker" / "probe-round-1.js").exists()
+      and jobs.git(job.repo, "status", "--porcelain") == "")
+check("PROBE-WRONG is accepted, and the same probe isn't held against the code again",
+      v2.verdict == "PASS" and v3.verdict == "PASS" and state.get("wrong") == {2} and len(asked_probe) == 1,
+      f"{v2.verdict} {v3.verdict} {state.get('wrong')}")
 
 shutil.rmtree(TMP, ignore_errors=True)
 if failures:

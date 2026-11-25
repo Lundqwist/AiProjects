@@ -28,7 +28,7 @@ PACKS_DIR = Path(__file__).resolve().parent / "packs"
 SKIP_DIRS = {".git", "node_modules", "bin", "obj", "dist", "build", "vendor", ".venv", "venv", "__pycache__",
              ".vs", ".idea", ".workbench-history", "packages", "out", "coverage", ".next", ".nuxt"}
 ACTIONS = ("restore", "build", "test", "lint", "typecheck")
-TAIL = 80
+TAIL = 200   # lines of output kept (the Checker's probes read every test's ok / not ok line from it)
 SECRET_ENV = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|_KEY$|CREDENTIAL|PRIVATE|CONNECTIONSTRING|_PAT$|COOKIE",
                         re.I)
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")

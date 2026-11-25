@@ -516,6 +516,35 @@ What the runs showed:
 5. **The remaining failures are edge cases that a reading Checker misses** (`null` vs `undefined`, a bare
    `/junk keep`, a trailing space). That is the next thing to fix (see START HERE).
 
+## Day 5b: Checker probes, tried and switched off (2026-11-25)
+
+Built: `app\team\probes.py` + `prompts\probe.md`. The Checker's model writes one small test per requirement, from
+the requirements, the client's own example test and helpers, and the code's function names (not the Builder's
+code). It is placed next to the client's tests and named so their runner finds it (`checker_probe_test.lua`,
+`checker-probe.test.js`, `CheckerProbeTests.cs`), run through the Runner, then removed (never committed; a copy is
+kept in `checker\`). Failing probes must each be called CODE-WRONG or PROBE-WRONG; the same probes run again in
+later FIX rounds; an accepted PROBE-WRONG isn't held against the code again. Tested with fake models.
+
+Result with `qwen3:8b` writing and judging the probes, all four jobs, 3 runs each: **7 of 12 again, in 164
+minutes instead of 25**, and much worse behaviour:
+
+- probes that misused the test harness (`W.slash("/rolls clear", "")` instead of `W.slash("/rolls", "clear")`)
+  and failed for that reason; the Checker didn't explain them, and an unexplained failure counted against the
+  code, so the Builder chased problems that weren't there;
+- the team stopped on correct code in 4 runs (hidden checks passed, the Checker still said FIX);
+- the Checker's answer ran away: a FIX list of 337 repeated items, in which it says itself "the test is wrong".
+
+So `team_probes` is **off** (setting in `wb_settings.py`); the code stays, tested, for a stronger probe writer.
+Kept from the trial: repeated FIX items are dropped, "no change needed" items aren't items, at most 15 per list.
+With probes off and these guards, a confirmation run (3 runs each): **8 of 12 in 29 minutes** (todo API 3/3, roll
+tracker 3/3, junk seller 1/3 (its first pass), cart 1/3). Between runs the cart and junk jobs move by one or two
+passes, so 7-8 of 12 is the team's level today.
+
+What would make probes work (not done): probes written by the strongest local model (`qwen3-coder:30b`, black-box:
+it sees only the requirements and the example test), a probe that errors in the harness or in itself (not an
+assertion) thrown away by the program instead of judged, and an unexplained failing probe dropped instead of
+counted against the code.
+
 ## START HERE FIRST
 
 **Day 1 is done** (2026-11-25): context overflow and file parser fixed, Git for Windows installed, two web golden
@@ -572,10 +601,9 @@ jobs and the bake-off written, Builder model chosen (`qwen3-coder:30b`, see Day 
 **Day 5 is done** (2026-11-25): the lua pack and 2 Lua golden jobs (see Day 5 results). Goal was 2 of 2 Lua jobs
 passing; got roll tracker 2/3, junk seller 0/3. All four jobs: 7 of 12 end to end.
 
-**Next, before Day 6: Checker probes.** Most remaining failures are edge cases the Checker reads past. Let it write
-a small test per requirement (with the job's own test harness: `tests\*_test.lua`, `test\*.test.js`, the xUnit
-project), run it through the Runner, and judge from the results; a probe that fails is handled like the
-Builder's own failing tests (the Checker says whether the probe or the code is wrong). Then Day 6 (Tizen + Android).
+**Day 5b (Checker probes) was tried and is switched off** (see Day 5b): with `qwen3:8b` it was no better and six
+times slower. The remaining failures are still edge cases a reading Checker misses. Next: either probes done the
+way Day 5b ends with, or Day 6 (Tizen + Android).
 
 Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would unload the model the
 CLI is about to use).

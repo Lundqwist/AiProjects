@@ -52,6 +52,9 @@ class Settings:
     writing_model: str = "gemma3:12b"
     # The coding team (team\): the Builder is the code expert; these two read and judge
     team_scout_model: str = "qwen2.5-coder:7b"
+    # the Checker writes and runs a small test per requirement (probes.py). Off: with qwen3:8b judging its own
+    # probes it was worse (misused harness, unexplained failures, runaway answers) and six times slower (Day 5b)
+    team_probes: bool = False
     team_checker_model: str = "qwen3:8b"   # thinks first; deepseek-r1:8b gave empty answers, and the Builder's
     #                                         own model shared its blind spots (Day 4 trial)
 

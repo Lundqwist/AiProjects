@@ -74,12 +74,14 @@ def run_step(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | No
     if not b.ok:
         out.status, out.message = b.status, b.message
         return out
+    probe_state: dict = {}   # the Checker's probes: written once per step, run again every round
     for rnd in range(1, fix_rounds + 2):
         on_event("Checker", f"round {rnd}: running the checks and reading the code with "
                             f"{llm.model_for(s, 'checker')}")
         last = out.verdicts[-1] if out.verdicts else None
         v = checker.check(s, job, step, pack.requirements, since, ask_fn=ask_fn, round_no=rnd,
-                          last_fix=last.fix_list if last else None, disputes=out.builds[-1].disputes or None)
+                          last_fix=last.fix_list if last else None, disputes=out.builds[-1].disputes or None,
+                          probe_state=probe_state)
         out.verdicts.append(v)
         if v.verdict == "PASS":
             out.status, out.message = "pass", f"PASS after {rnd} Checker round(s)."

@@ -24,6 +24,7 @@ from wb_settings import Settings
 
 PROMPT = (Path(__file__).resolve().parent / "prompts" / "checker.md").read_text(encoding="utf-8")
 FILES_CHARS = 30000
+MAX_FIX = 15
 DIFF_CHARS = 20000
 
 REQ_LINE = re.compile(r"^\s*\**\s*R(\d+)\s*\**\s*[:.)-]\s*\**\s*(DONE|MISSING|WRONG|PARTIAL|UNCLEAR)\**\s*[-:–—]?\s*(.*)$",
@@ -31,6 +32,8 @@ REQ_LINE = re.compile(r"^\s*\**\s*R(\d+)\s*\**\s*[:.)-]\s*\**\s*(DONE|MISSING|WR
 # "VERDICT: PASS | FIX | ASK" is the template copied, not a verdict (Day 4): the line must hold one word only
 VERDICT = re.compile(r"^\s*\**\s*VERDICT\s*\**\s*:\s*\**\s*(PASS|FIX|ASK)\b\**\s*\.?\s*$", re.I | re.M)
 FIX_ITEM = re.compile(r"^\s*(\d+)[.)]\s+(.+)$", re.M)
+PROBE_LINE = re.compile(r"^\s*\**\s*P(\d+)\s*\**\s*[:.)-]\s*\**\s*(CODE[- ]WRONG|PROBE[- ]WRONG)\**\s*[-:–—]?\s*(.*)$",
+                        re.I | re.M)
 ASK_LINE = re.compile(r"^\s*\**\s*ASK\s*\**\s*(?:\(.*?\))?\s*:\s*(.+)$", re.I | re.M)
 
 
@@ -44,6 +47,8 @@ class Verdict:
     checks: str = ""                 # the program's own build/test report
     raw: str = ""
     by: str = ""                     # "the checks" or the model
+    probe_code: str = ""             # the Checker's probes, when some of them show the code is wrong
+    probe_details: str = ""
 
     def fix_text(self) -> str:
         """What the Builder gets for its next round."""
@@ -51,6 +56,9 @@ class Verdict:
         out += [f"{i}. {f}" for i, f in enumerate(self.fix_list, 1)] or [f"- {r}" for r in self.reasons]
         if self.checks and self.by == "the checks":
             out.append("\n" + self.checks)
+        if self.probe_code:
+            out.append("\nThe Checker's probe tests (they are not in the repository; they show the failing cases):\n"
+                       f"```\n{self.probe_code}\n```\nWhat failed when they ran:\n```\n{self.probe_details}\n```")
         return "\n".join(out)
 
 
@@ -94,7 +102,11 @@ def parse(reply: str, n_requirements: int) -> Verdict:
     after = text[text.lower().find("fix list"):] if "fix list" in text.lower() else ""
     if after:
         stop = re.search(r"^\s*\**\s*ASK\b", after, re.I | re.M)
-        v.fix_list = [i.group(2).strip() for i in FIX_ITEM.finditer(after[:stop.start()] if stop else after)]
+        items = [i.group(2).strip() for i in FIX_ITEM.finditer(after[:stop.start()] if stop else after)]
+        # a model that starts repeating itself lists the same item hundreds of times (337, Day 5b); items that
+        # say no change is needed aren't items
+        items = [i for i in dict.fromkeys(items) if not re.search(r"no change (is )?needed|already correct", i, re.I)]
+        v.fix_list = items[:MAX_FIX]
     am = ASK_LINE.search(text)
     if am and am.group(1).strip().lower() not in ("none", "-", "n/a"):
         v.question = am.group(1).strip()
@@ -116,7 +128,7 @@ def parse(reply: str, n_requirements: int) -> Verdict:
 
 def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since: str, *,
           ask_fn: runner.AskFn | None = None, round_no: int = 1, last_fix: list[str] | None = None,
-          disputes: list[str] | None = None) -> Verdict:
+          disputes: list[str] | None = None, probe_state: dict | None = None) -> Verdict:
     """`last_fix` = this Checker's FIX list from the last round; `disputes` = the items the Builder says were
     wrong, with its reasons. The Checker reads the code again for those and decides."""
     repo = job.repo.resolve()
@@ -149,6 +161,29 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
             + f"Your own run of the build and tests:\n{report}\n\n"
             f"The step's diff:\n```diff\n{step_diff(repo, since) or '(no changes)'}\n```\n\n"
             f"The changed files as they are now (line numbers on the left):\n\n{files_text(repo, files)}")
+    probe = None
+    probe_state = probe_state if probe_state is not None else {}
+    if getattr(s, "team_probes", True) and requirements:
+        from team import probes
+        probe = probes.run(s, job, step, requirements, code=probe_state.get("code", ""), ask_fn=ask_fn,
+                           round_no=round_no)
+        if probe.usable:
+            probe_state["code"] = probe.code
+            wrong = probe_state.setdefault("wrong", set())
+            probe.failed = [n for n in probe.failed if n not in wrong]
+            user += (f"\n\nYour probe tests ({probe.path}, written from the requirements only, then run):\n"
+                     f"```\n{probe.code}\n```\nResults: passed "
+                     + (", ".join(f"R{n}" for n in probe.passed) or "none") + "; failed "
+                     + (", ".join(f"R{n}" for n in probe.failed) or "none")
+                     + (f"\n```\n{probe.details}\n```" if probe.failed else "")
+                     + ("\nFor EVERY failing probe, add one line before the VERDICT:\n"
+                        "P<n>: CODE-WRONG - <what the code does wrong for this case>\n"
+                        "or P<n>: PROBE-WRONG - <why the probe expects something the requirement doesn't say>\n"
+                        "Read the requirement again before you call a probe wrong. A requirement whose probe is "
+                        "CODE-WRONG is MISSING or WRONG." if probe.failed else
+                        "\nEvery probe passed; still read the code for what the probes don't cover."))
+        elif probe.note:
+            job.log(f"Checker · probes · round {round_no}", probe.note)
     if own_failing:
         user += ("\n\nTests the Builder wrote itself fail: " + ", ".join(own_failing) + ". The client's tests pass. "
                  "Work out for each failing test whether the TEST is wrong (it expects something the step doesn't "
@@ -178,6 +213,26 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
             break
     if not v.verdict:
         v.verdict, v.question = "ASK", "The Checker's answer couldn't be read twice; look at the diff yourself."
+    if probe and probe.usable and probe.failed:
+        said = {int(m.group(1)): (m.group(2).upper().replace(" ", "-"), m.group(3).strip())
+                for m in PROBE_LINE.finditer(re.sub(r"<think>.*?</think>", "", v.raw, flags=re.S))}
+        for n, (kind, why) in said.items():
+            if kind == "PROBE-WRONG" and n in probe.failed:
+                probe_state["wrong"].add(n)   # accepted: not held against the code in later rounds either
+        # a failing probe the Checker didn't explain counts against the code: the safe side
+        code_wrong = [n for n in probe.failed if said.get(n, ("CODE-WRONG", ""))[0] != "PROBE-WRONG"]
+        if code_wrong:
+            if v.verdict != "ASK":
+                if v.verdict == "PASS":
+                    v.reasons.append("the Checker's own probes fail for " + ", ".join(f"R{n}" for n in code_wrong))
+                v.verdict = "FIX"
+            have = " ".join(v.fix_list)
+            for n in code_wrong:
+                if f"R{n}" not in have:
+                    req = requirements[n - 1] if 0 < n <= len(requirements) else ""
+                    v.fix_list.append(f"R{n} ({req}): the Checker's probe for it fails"
+                                      + (f" - {said[n][1]}" if n in said and said[n][1] else ""))
+            v.probe_code, v.probe_details = probe.code, probe.details
     if own_failing and v.verdict == "PASS":   # never a PASS with a failing test, whoever wrote it
         v.verdict = "FIX"
         v.fix_list = v.fix_list or [f"{f} fails: decide whether the test or the code is wrong against the "
