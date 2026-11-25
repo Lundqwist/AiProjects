@@ -12,7 +12,7 @@ It's dressed in the navy and gold of [lundqwist.se](https://lundqwist.se), like 
 
 ### One conversation, by voice or text
 
-One input: type, or hold 🎤 and talk, or say **"Hey Luna"** (an always-on wake word, all local), or switch on a conversation mode without the wake word. Speech recognition is Whisper (faster-whisper), the voices are Piper, and the answer comes back in the language of the question. Typed and spoken messages are one conversation, so a follow-up works whichever way I asked before.
+One input: type, or hold 🎤 and talk, or say **"Hey Luna"** (an always-on wake word, all local), or switch on a conversation mode without the wake word. Speech recognition is Whisper (faster-whisper), the voices are Piper, and the answer comes back in the language of the question. Typed and spoken messages are one conversation, so a follow-up works whichever way I asked before. Every conversation is saved by itself and listed on the right: click one to carry on where it stopped (the assistant remembers what was said in it), or archive or delete it.
 
 **The right expert, and few tokens.** Before any model sees a message, a router picks only the tools it needs from the abilities that are ticked: "put CNN on the TV" is offered the four TV tools, not all 43 (about 2 300 characters of tool descriptions instead of 18 000). A question that needs no tool but is about code, maths or writing goes straight to that expert (`qwen2.5-coder:7b`, `deepseek-r1:8b`, `gemma3:12b`) with a short summary of the conversation instead of all of it. Larger typed jobs can go to an online AI while it has tokens; spoken questions and VS Code always stay on this PC.
 

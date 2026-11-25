@@ -238,14 +238,16 @@ class SettingsTab(QWidget):
         self.code_projects_dir = PathPicker(self.s.code_projects_dir)
         self.code_roots = QLineEdit("; ".join(self.s.code_roots))
         self.voices_dir = PathPicker(self.s.voices_dir)
+        self.conversations_dir = PathPicker(self.s.conversations_dir)
         f.addRow("Document database", self.rag_db)
         f.addRow("Invoice inbox", self.invoice_inbox)
         f.addRow("Invoice output", self.invoice_output)
         f.addRow("Research reports", self.reports_dir)
         f.addRow("Pictures, music, stories", self.creations_dir)
         f.addRow("Work folder (files and code the AI creates)", self.code_projects_dir)
-        f.addRow("Code folders voice may open", self.code_roots)
+        f.addRow("Code folders the assistant may open", self.code_roots)
         f.addRow("Piper voices", self.voices_dir)
+        f.addRow("Saved conversations", self.conversations_dir)
         return g
 
     def _sound_group(self) -> QGroupBox:
@@ -554,7 +556,8 @@ class SettingsTab(QWidget):
         for picker, value in ((self.rag_db, s.rag_db), (self.invoice_inbox, s.invoice_inbox),
                               (self.invoice_output, s.invoice_output), (self.reports_dir, s.reports_dir),
                               (self.voices_dir, s.voices_dir), (self.eval_dir, s.eval_dir),
-                              (self.creations_dir, s.creations_dir), (self.code_projects_dir, s.code_projects_dir)):
+                              (self.creations_dir, s.creations_dir), (self.code_projects_dir, s.code_projects_dir),
+                              (self.conversations_dir, s.conversations_dir)):
             picker.edit.setText(value)
         self._shown_code_dir = s.code_projects_dir
         self.speed.setValue(int(s.speech_speed * 100))
@@ -599,6 +602,7 @@ class SettingsTab(QWidget):
         s.invoice_output, s.reports_dir = self.invoice_output.text(), self.reports_dir.text()
         s.voices_dir, s.eval_dir = self.voices_dir.text(), self.eval_dir.text()
         s.creations_dir, s.code_projects_dir = self.creations_dir.text(), self.code_projects_dir.text()
+        s.conversations_dir = self.conversations_dir.text()
         self._shown_code_dir = s.code_projects_dir
         s.code_roots = [r.strip() for r in self.code_roots.text().split(";") if r.strip()]
         s.input_device = self.input_device.currentData()

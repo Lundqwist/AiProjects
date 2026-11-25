@@ -13,8 +13,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton,
-                               QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+                               QPushButton, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from wb_settings import Settings
 from wb_home import HeaderBand
@@ -40,6 +40,8 @@ import wb_task_tools
 import wb_wake
 from wb_permission import PermissionBroker
 from tab_chat import ChatTab
+from conversations_pane import ConversationsPane
+import wb_conversations
 import wb_updates
 from updates_dialog import UpdatesDialog
 from wb_common import GOLD, MUTED, NAVY_2, NAVY_3, run_in_background
@@ -232,13 +234,25 @@ class MainWindow(QMainWindow):
         self.abilities.changed.connect(self.abilities_changed)
         self.abilities.open_panel.connect(self.open_panel)
         self.chat.abilities_used.connect(self.abilities.light)
+        # Saved conversations on the far right: click one to continue it, Archive or Delete beside each
+        self.conversations = ConversationsPane(s)
+        self.conversations.open.connect(self.chat.open_conversation)
+        self.conversations.new.connect(lambda: self.chat.new_conversation())
+        self.conversations.archive.connect(self.archive_conversation)
+        self.conversations.delete.connect(self.delete_conversation)
+        self.conversations.hide_me.connect(lambda: self.show_conversations(False))
+        self.chat.conversations_changed.connect(self.conversations.refresh)
+        self.chat.toggle_list.connect(lambda: self.show_conversations(self.conversations.isHidden()))
 
         self.split = QSplitter(Qt.Horizontal)
         self.split.addWidget(self.abilities)
         self.split.addWidget(self.chat)
         self.split.addWidget(self.panel_area)
+        self.split.addWidget(self.conversations)
         self.split.setStretchFactor(1, 3)
         self.split.setStretchFactor(2, 4)
+        self.split.setStretchFactor(3, 0)
+        self.split.setCollapsible(0, False)
         self.split.setCollapsible(1, False)
         header = HeaderBand("One conversation, by voice or text  ·  local AI with Ollama  ·  lundqwist.se")
         header.home_clicked.connect(self.close_panel)
@@ -253,6 +267,8 @@ class MainWindow(QMainWindow):
             self.open_panel(s.panel_open, "")
         else:
             self.panel_area.hide()
+        self.conversations.refresh(self.chat.conv.id)
+        self.show_conversations(s.conversations_shown, remember=False)
 
         # once a day, corrections you repeated become rules (checked a while after start, then hourly)
         self.learn_timer = QTimer(self, interval=3600_000, timeout=self.learn_rules)
@@ -287,9 +303,12 @@ class MainWindow(QMainWindow):
             self.brain.refresh()
         if self.panel_area.isHidden():
             self.panel_area.show()
+            sizes = self.split.sizes()
             total = max(self.split.width(), 1200)
-            side = self.split.sizes()[0] or 230
-            self.split.setSizes([side, (total - side) * 4 // 9, (total - side) * 5 // 9])
+            side = sizes[0] or 230
+            right = (sizes[3] or 260) if self.conversations.isVisible() else 0
+            rest = total - side - right
+            self.split.setSizes([side, rest * 4 // 9, rest * 5 // 9, right])
         self._remember_panel(key)
 
     def close_panel(self):
@@ -303,6 +322,61 @@ class MainWindow(QMainWindow):
                 self.s.save()
             except OSError:
                 pass
+
+    # ---- saved conversations --------------------------------------------------------------------
+    def show_conversations(self, on: bool, remember: bool = True):
+        self.conversations.setVisible(on)
+        self.chat.list_btn.setText("☰ Conversations" + ("" if on else " »"))
+        self.chat.new_btn.setVisible(not on)  # the list has its own New conversation button
+        if on and self.isVisible():
+            sizes = self.split.sizes()
+            if len(sizes) == 4 and sum(sizes) and sizes[3] < 200:
+                sizes[1] = max(300, sizes[1] - (260 - sizes[3]))
+                sizes[3] = 260
+                self.split.setSizes(sizes)
+        if remember and self.s.conversations_shown != on:
+            self.s.conversations_shown = on
+            try:
+                self.s.save()
+            except OSError:
+                pass
+
+    def archive_conversation(self, cid: str, archive: bool):
+        is_open = cid == self.chat.conv.id
+        if is_open and archive:
+            if self.chat.busy_reason():
+                self.statusBar().showMessage(self.chat.busy_reason(), 8000)
+                return
+            self.chat.save_conversation()
+        if not wb_conversations.set_archived(self.s, cid, archive):
+            self.statusBar().showMessage("That conversation could not be changed.", 8000)
+            return
+        if is_open and archive:  # put away: a fresh conversation takes its place
+            self.chat.new_conversation(save_current=False)
+        self.statusBar().showMessage("Archived: Show archived finds it again." if archive
+                                     else "Restored to the list.", 6000)
+        self.conversations.refresh(self.chat.conv.id)
+
+    def delete_conversation(self, cid: str):
+        is_open = cid == self.chat.conv.id
+        if is_open and self.chat.busy_reason():
+            self.statusBar().showMessage(self.chat.busy_reason(), 8000)
+            return
+        c = wb_conversations.load(self.s, cid)
+        title = c.title if c else cid
+        if QMessageBox.question(self, "Delete conversation",
+                                f"Delete “{title}”?\n\nIt goes to the Recycle Bin, so it can be restored from there.",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            wb_conversations.delete(self.s, cid)
+        except OSError as e:
+            QMessageBox.warning(self, "Delete conversation", str(e))
+            return
+        if is_open:
+            self.chat.new_conversation(save_current=False)
+        self.statusBar().showMessage(f"Deleted “{title}” (it is in the Recycle Bin).", 8000)
+        self.conversations.refresh(self.chat.conv.id)
 
     def abilities_changed(self):
         self.chat.apply_settings()

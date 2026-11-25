@@ -68,6 +68,7 @@ class Settings:
     code_projects_dir: str = str(DATA / "Code projects")  # the work folder: Code panel, experts and the assistant
     code_roots: list = field(default_factory=lambda: [str(DATA / "Code projects"), str(ROOT.parent)])  # voice may open these
     brain_dir: str = str(DATA / "Brain")                  # long-term memory as Markdown (wb_brain.py)
+    conversations_dir: str = str(DATA / "Conversations")  # every conversation, one JSON file each (wb_conversations.py)
 
     # Brain
     brain_in_voice: bool = True       # the assistant can remember and recall, and follows the rules
@@ -125,6 +126,8 @@ class Settings:
     # Abilities (wb_abilities.py): which ones the assistant may use; missing keys count as on
     abilities: dict = field(default_factory=dict)
     panel_open: str = ""              # the tool panel shown beside the conversation ("" = none)
+    conversation_id: str = ""         # the conversation open when the program closed: reopened at start
+    conversations_shown: bool = True  # the list of conversations on the right
 
     # VS Code bridge (wb_bridge.py): the extension talks to this program on 127.0.0.1 only
     bridge_on: bool = True
@@ -175,7 +178,7 @@ class Settings:
 
     def ensure_folders(self) -> None:
         for d in (self.rag_db, self.invoice_inbox, self.invoice_output, self.reports_dir, self.creations_dir,
-                  self.code_projects_dir, self.brain_dir):
+                  self.code_projects_dir, self.brain_dir, self.conversations_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
 
     def apply(self) -> None:

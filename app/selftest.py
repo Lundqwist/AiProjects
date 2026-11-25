@@ -22,6 +22,7 @@ APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
 sys.path[:0] = [str(APP_DIR)] + [str(ROOT / d) for d in ("01-rag", "02-voice", "03-invoices", "04-research")]
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from wb_settings import Settings  # noqa: E402
@@ -64,6 +65,7 @@ s = Settings()
 s.rag_db, s.invoice_inbox = str(TMP / "db"), str(TMP / "inbox")
 s.invoice_output, s.reports_dir = str(TMP / "output"), str(TMP / "reports")
 s.brain_dir = str(TMP / "Brain")  # never the real brain
+s.conversations_dir = str(TMP / "Conversations")  # nor your saved conversations
 s.speak_replies = False
 s.voice_mode = "hold"  # the microphone stays off until the wake word test feeds audio itself
 s.ensure_folders()
@@ -625,6 +627,48 @@ record("window: every panel opens beside the conversation; Access and Evaluation
        all(opened) and w.settings_panel.indexOf(w.access) >= 0 and w.settings_panel.indexOf(w.evaluation) >= 0,
        str(dict(zip(w.panels, opened))))
 record("window: switching an ability off takes its tools away", off)
+
+# Saved conversations: saved after every answer, listed on the right, opened again with what was said
+import wb_conversations  # noqa: E402
+
+wc = w.chat
+wc.new_conversation()
+n = len(wc.turns)
+wc.run_turn(text="My favourite colour is teal. Just say OK.")
+wait(lambda: len(wc.turns) >= n + 2 and not wc.is_busy, 180)
+wait(lambda: False, 0.5)
+first = wc.conv.id
+saved = wb_conversations.load(s, first)
+record("conversations: saved by itself after an answer, titled by its first message",
+       bool(saved) and saved.title.startswith("My favourite colour") and len(saved.history) >= 2
+       and w.conversations.list.count() >= 1, saved.title if saved else "not saved")
+wc.new_conversation()
+wc.run_turn(text="What is the capital of Norway?")
+wait(lambda: len(wc.turns) >= 2 and not wc.is_busy, 180)
+wait(lambda: False, 0.5)
+second = wc.conv.id
+w.conversations.list.itemClicked.emit(next(w.conversations.list.item(i) for i in range(w.conversations.list.count())
+                                           if w.conversations.list.item(i).data(Qt.UserRole) == first))
+opened = wc.conv.id == first and len(wc.turns) == 2
+n = len(wc.turns)
+wc.run_turn(text="What is my favourite colour?")
+wait(lambda: len(wc.turns) >= n + 2 and not wc.is_busy, 180)
+record("conversations: clicking one opens it, and the assistant remembers what was said in it",
+       opened and "teal" in wc.turns[-1][1].lower(), wc.turns[-1][1][:80])
+w.archive_conversation(second, True)
+listed = [c.id for c in wb_conversations.listing(s)]
+archived = [c.id for c in wb_conversations.listing(s, archived=True)]
+record("conversations: Archive hides it from the list, Show archived finds it",
+       second not in listed and second in archived)
+w.archive_conversation(second, False)
+asked_dialog = QMessageBox.question
+QMessageBox.question = lambda *a, **k: QMessageBox.Yes  # "Delete …?" is expected here: answer yes
+w.delete_conversation(second)
+record("conversations: Delete removes it (to the Recycle Bin)",
+       not (Path(s.conversations_dir) / f"{second}.json").exists() and first in [c.id for c in wb_conversations.listing(s)])
+w.delete_conversation(first)
+record("conversations: deleting the open one starts a fresh conversation", wc.conv.id != first and not wc.turns)
+QMessageBox.question = asked_dialog
 w.close()
 
 vt.shutdown()

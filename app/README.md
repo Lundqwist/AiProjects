@@ -10,7 +10,8 @@ The window is in lundqwist.se's navy and gold, like StoryMaker. The band at the 
 |---|---|
 | **Abilities** (left) | A tick per ability: only ticked ones are offered to the assistant. *Open* shows the ability's full panel beside the conversation. Abilities that can't work yet are greyed, with the reason in the tooltip (My TV before *Find TV*, Spotify before it's connected). The ones the last answer used light up gold for a while. *Settings* is at the bottom |
 | **Conversation** (middle) | One input: type (Enter sends, Shift+Enter for a new line) or hold 🎤 and talk, or use the listening modes (*Hey Luna*, *Conversation*, *Hold to talk*; F2 switches). Spoken questions get short spoken answers; typed ones get full answers on screen, with Markdown and code. Every answer ends with who answered, what it used, the tokens read and written, how many tools it was offered and the time taken. *Stop speaking*, *Save to brain*, *New conversation*; a moving bar with the step and *Stop waiting* while it works. Files an expert writes (a website, a program) are listed under the conversation with *Save N files* and *Folder…*. Songs, movies and reports finish in the background and say so in the conversation |
-| **Panel** (right) | The full tool for an ability, opened with its *Open* button; ✕ closes it. The one open when you quit opens again next time |
+| **Panel** | The full tool for an ability, opened with its *Open* button beside the conversation; × closes it. The one open when you quit opens again next time |
+| **Conversations** (right) | Every conversation is saved by itself after each answer (`wb_conversations.py`, one JSON file each in `Documents\AI Workbench\Conversations`, changeable in Settings → Folders) and listed newest first with its first message as the title (`conversations_pane.py`). Click one to continue it: the screen and what the assistant remembers of it (its messages, tool calls and results) come back, so follow-ups work. Each has **Archive** (hidden from the list; *Show archived* lists them with *Restore*) and **Delete** (asks first, then moves the file to the Windows Recycle Bin). *＋ New conversation*, a search box for titles, and » hides the list (☰ Conversations shows it again). The conversation open when you quit opens again at start. While an answer is being worked on, switching waits |
 
 | Panel | What you do there |
 |---|---|
@@ -190,6 +191,7 @@ A small loading window shows at once, with what is loading and for how long. Usu
 | Log (when started without a console) | `%APPDATA%\AI Workbench\workbench.log` |
 | VS Code bridge token, and the built extension package | `%APPDATA%\AI Workbench\bridge-token`, `ai-workbench-<version>.vsix` |
 | Which abilities are on, which panel is open | `abilities` and `panel_open` in settings.json |
+| Conversations | `Documents\AI Workbench\Conversations\<date-time-id>.json`: title, times, archived, the turns shown and the assistant's messages; the one open last is `conversation_id` in settings.json |
 | Document database, invoice inbox/output, research reports | `Documents\AI Workbench\` by default; changeable in Settings |
 | Brain (notes, wiki, rules) | `Documents\AI Workbench\Brain` (`brain_dir` in settings.json) |
 

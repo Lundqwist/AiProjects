@@ -30,6 +30,7 @@ DEMO.mkdir(parents=True)
     "code_projects_dir": str(DEMO / "Code projects"),
     "code_roots": [str(DEMO / "Code projects")],
     "brain_dir": str(DEMO / "Brain"),
+    "conversations_dir": str(DEMO / "Conversations"),
     "speak_replies": False,
     "voice_mode": "hold",
     "check_updates_at_start": False,

@@ -27,6 +27,7 @@ import wb_access
 import wb_ai
 import wb_brain
 import wb_code
+import wb_conversations
 import wb_create
 import wb_notify
 import wb_spotify
@@ -182,6 +183,8 @@ class MessageBox(QPlainTextEdit):
 class ChatTab(QWidget):
     """The conversation. Kept API from the old Voice tab: run_turn, turns, bot, set_mode, next_mode, wake."""
     abilities_used = Signal(list)   # tool groups a turn used: the window lights them up
+    conversations_changed = Signal(str)  # a conversation was saved or another opened: the id now open
+    toggle_list = Signal()          # ☰ Conversations: show or hide the list on the right
 
     def __init__(self, settings: Settings, status):
         super().__init__()
@@ -196,6 +199,9 @@ class ChatTab(QWidget):
         self.turns: list[tuple[str, str, str]] = []  # (who, text, info); who = you, bot or note
         self.previous_groups: list[str] = []          # tool groups the last turn used (follow-ups keep them)
         self.pending_files: list[wb_code.Change] = []
+        self.conv = wb_conversations.Conversation()  # the conversation on screen, saved after every answer
+        self._saved_as = ("", 0)                         # (id, turns) last saved: unchanged ones aren't saved again
+        self.pending_history: list | None = None    # messages for the assistant when it is (re)loaded
 
         # ---- conversation view
         self.view = QTextBrowser()
@@ -286,14 +292,18 @@ class ChatTab(QWidget):
         self.keep_btn = QPushButton("Save to brain")
         self.keep_btn.setToolTip("Keep what's worth remembering from this conversation as a note in the Brain")
         self.keep_btn.clicked.connect(self.save_to_brain)
-        new = QPushButton("New conversation")
-        new.clicked.connect(self.new_conversation)
+        self.new_btn = new = QPushButton("New conversation")
+        new.clicked.connect(lambda: self.new_conversation())  # not clicked's own argument as save_current
+        self.list_btn = QPushButton("☰ Conversations")
+        self.list_btn.setToolTip("Show or hide your saved conversations on the right")
+        self.list_btn.clicked.connect(self.toggle_list.emit)
         top = QHBoxLayout()
         top.addWidget(self.mode_btn)
         top.addWidget(self.wake_state, 1)
         top.addWidget(stop)
         top.addWidget(self.keep_btn)
         top.addWidget(new)
+        top.addWidget(self.list_btn)
 
         lay = QVBoxLayout(self)
         lay.addLayout(top)
@@ -312,6 +322,10 @@ class ChatTab(QWidget):
         self.timer = QTimer(self, interval=50, timeout=self._update_meter)
         wb_notify.subscribe(self._from_job)
         self.apply_settings()
+        if self.s.conversation_id:  # carry on with the conversation open when the program closed
+            last = wb_conversations.load(self.s, self.s.conversation_id)
+            if last and not last.archived:
+                self._show_conversation(last)
         self.render()
         # Start listening for "Hey Luna", unless Hold to talk (no listening) was chosen last. Conversation
         # mode answers everything said near the microphone, so it is never where the program starts.
@@ -418,7 +432,9 @@ class ChatTab(QWidget):
 
     # ---- settings and tools -------------------------------------------------------------------
     def apply_settings(self):
-        """Called after Settings or the abilities change: the models are reloaded on the next turn."""
+        """Called after Settings or the abilities change: the models are reloaded on the next turn,
+        and the reloaded assistant gets the conversation so far."""
+        self._keep_history()
         self.bot = None
         self._sync_tools()
         ptt = self.s.push_to_talk
@@ -464,6 +480,9 @@ class ChatTab(QWidget):
                                        whisper_device=s.whisper_device, voices={"en": s.voice_en, "sv": s.voice_sv},
                                        voices_dir=s.voices_dir, speed=s.speech_speed, volume=s.speech_volume,
                                        output_device=s.output_device, system=SYSTEM)
+        if self.pending_history is not None:  # an opened conversation, or the one before a reload
+            self.bot.history = self.bot.history[:1] + list(self.pending_history)
+            self.pending_history = None
         return self.bot
 
     # ---- recording ------------------------------------------------------------------------------
@@ -653,6 +672,7 @@ class ChatTab(QWidget):
             self.pending = max(0, self.pending - 1)
             if self.pending == 0:
                 self._stop_busy()
+                self.save_conversation()
             self._resume_wake()
 
         def done(result):
@@ -776,8 +796,12 @@ class ChatTab(QWidget):
         self.turns.append(("bot", text, "a background job finished"))
         if self.bot:
             self.bot.history.append({"role": "assistant", "content": text})
+        elif self.pending_history is not None:
+            self.pending_history.append({"role": "assistant", "content": text})
         self.render()
         self.status(text)
+        if not self.pending:
+            self.save_conversation()
 
     def _grow_answer(self, piece: str):
         if not self.turns or self.turns[-1][0] != "live":
@@ -824,6 +848,7 @@ class ChatTab(QWidget):
         self.show_files([])
         self.turns.append(("note", f"Saved {len(done)} file(s) in {opened} and opened it in VS Code.", ""))
         self.render()
+        self.save_conversation()
         try:
             wb_code.open_in_vscode(opened)
         except RuntimeError:
@@ -879,6 +904,7 @@ class ChatTab(QWidget):
         self._old_pools.append(self.pool)
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
+        self._keep_history()
         self.bot = None  # the stuck thread may still be using the old one
         if self.turns and self.turns[-1][0] == "live":
             self.turns.pop()
@@ -903,14 +929,93 @@ class ChatTab(QWidget):
                           on_error=lambda e: self.state.setText(f"Could not save: {e}"),
                           on_done=lambda: self.keep_btn.setEnabled(True))
 
-    def new_conversation(self):
+    # ---- saved conversations (wb_conversations.py) ------------------------------------------------
+    def _keep_history(self):
+        """Before the assistant is dropped (new settings, a stuck question): keep what it remembers."""
+        if self.bot is not None and self.pending_history is None:
+            self.pending_history = [d for d in (wb_conversations.message_to_dict(m) for m in self.bot.history[1:]) if d]
+
+    def save_conversation(self):
+        """Save the conversation on screen (after every answer, and when another one is opened)."""
+        c = self.conv
+        c.turns = [t for t in self.turns if t[0] != "live"]
+        if self._saved_as == (c.id, len(c.turns)):
+            return  # nothing new: keep its place in the list (switching away mustn't move it to the top)
+        c.groups = list(self.previous_groups)
+        history = self.bot.history if self.bot else None
+        if history is None and self.pending_history is not None:
+            history = [None] + self.pending_history  # the first entry stands for the instructions
+        try:
+            saved = wb_conversations.save(self.s, c, history)
+        except OSError as e:
+            self.state.setText(f"Could not save the conversation: {e}")
+            return
+        if saved and self.s.conversation_id != c.id:
+            self.s.conversation_id = c.id
+            try:
+                self.s.save()
+            except OSError:
+                pass
+        if saved:
+            self._saved_as = (c.id, len(c.turns))
+            self.conversations_changed.emit(c.id)
+
+    def _show_conversation(self, c: wb_conversations.Conversation):
         stop_sound()
+        self.conv = c
+        self.turns = [tuple(t) for t in c.turns]
+        self._saved_as = (c.id, len(self.turns))
+        self.previous_groups = list(c.groups)
+        self.show_files([])
+        if self.bot:
+            self.bot.history = self.bot.history[:1] + list(c.history)
+            self.pending_history = None
+        else:
+            self.pending_history = list(c.history)
+        self.render()
+
+    def busy_reason(self) -> str:
+        return "Wait for the answer (or click Stop waiting) before switching conversations." if self.pending else ""
+
+    def open_conversation(self, cid: str) -> bool:
+        """Make a saved conversation the one on screen, and the one the assistant continues."""
+        if cid == self.conv.id:
+            return True
+        if self.busy_reason():
+            self.state.setText(self.busy_reason())
+            return False
+        c = wb_conversations.load(self.s, cid)
+        if not c:
+            self.state.setText("That conversation could not be read.")
+            return False
+        self.save_conversation()
+        self._show_conversation(c)
+        self.s.conversation_id = c.id
+        try:
+            self.s.save()
+        except OSError:
+            pass
+        self.state.setText(f"Opened “{c.title}”. Carry on where you left off.")
+        self.conversations_changed.emit(c.id)
+        return True
+
+    def new_conversation(self, save_current: bool = True):
+        if self.busy_reason():
+            self.state.setText(self.busy_reason())
+            return
+        if save_current:
+            self.save_conversation()
+        stop_sound()
+        self.conv = wb_conversations.Conversation()
         if self.bot:
             self.bot.reset()
+        self.pending_history = None if self.bot else []
         self.turns.clear()
         self.previous_groups = []
         self.show_files([])
+        self.state.setText("")
         self.render()
+        self.conversations_changed.emit(self.conv.id)
 
     def render(self):
         if not self.turns:
@@ -940,6 +1045,10 @@ class ChatTab(QWidget):
 
     def shutdown(self):
         wb_notify.unsubscribe(self._from_job)
+        try:
+            self.save_conversation()
+        except Exception as e:  # noqa: BLE001 - closing must go on
+            print(f"chat shutdown: could not save the conversation: {e}")
         for step in ((lambda: self.wake.stop()) if self.wake else None,
                      (lambda: self.stream.close()) if self.stream else None,
                      stop_sound):
