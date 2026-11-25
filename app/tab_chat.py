@@ -773,7 +773,7 @@ class ChatTab(QWidget):
         text = HINT_ECHO.sub("", a.text)
         changes = []
         if files:
-            explanation, changes = wb_code.parse(a.text, folder)
+            explanation, changes = wb_code.parse(a.text, folder, a.notes)
             if changes:
                 text = explanation + "\n\n*Files written: " + ", ".join(c.path for c in changes) + \
                        " (not saved yet: see Save files below).*"

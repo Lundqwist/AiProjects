@@ -69,6 +69,7 @@ class Settings:
     code_roots: list = field(default_factory=lambda: [str(DATA / "Code projects"), str(ROOT.parent)])  # voice may open these
     brain_dir: str = str(DATA / "Brain")                  # long-term memory as Markdown (wb_brain.py)
     conversations_dir: str = str(DATA / "Conversations")  # every conversation, one JSON file each (wb_conversations.py)
+    jobs_dir: str = str(DATA / "Jobs")                    # the coding team's client jobs (team\jobs.py)
 
     # Brain
     brain_in_voice: bool = True       # the assistant can remember and recall, and follows the rules
@@ -178,7 +179,7 @@ class Settings:
 
     def ensure_folders(self) -> None:
         for d in (self.rag_db, self.invoice_inbox, self.invoice_output, self.reports_dir, self.creations_dir,
-                  self.code_projects_dir, self.brain_dir, self.conversations_dir):
+                  self.code_projects_dir, self.brain_dir, self.conversations_dir, self.jobs_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
 
     def apply(self) -> None:

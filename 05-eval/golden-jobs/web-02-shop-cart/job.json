@@ -1,0 +1,6 @@
+{
+  "name": "web-02-shop-cart",
+  "pack": "web",
+  "check": ["node", "--test"],
+  "timeout": 120
+}

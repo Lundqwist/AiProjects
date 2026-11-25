@@ -1,0 +1,112 @@
+# Stack pack: web (full-stack websites)
+#
+# A pack says how to find the projects in a client's repository, which commands the team may run on
+# them, and what the models must know about the stack. The models never write commands themselves:
+# they ask for an action by name (build, test, lint, typecheck, restore) and the Runner builds the
+# command from the lines below. Nothing else can run.
+#
+# {file} = the project file found (absolute), {dir} = its folder. Commands run in {dir}.
+# when:  "script:NAME"   package.json has that script (npm's default "no test specified" doesn't count)
+#        "file:NAME"     that file exists in {dir}
+#        "test-project"  a .csproj that references Microsoft.NET.Test.Sdk (or a .sln, which may hold tests)
+# needs: "file:PATH"     must exist first, or the action reports that a restore is needed
+#        "deps-installed"  node_modules exists, if package.json lists any dependencies
+# ask = true: shown on screen first (click only, 90 s = no), with `why`.
+
+name = "web"
+title = "Full-stack web (ASP.NET Core, Node/React, PHP)"
+
+[[kind]]
+name = "dotnet"
+markers = ["*.sln", "*.csproj"]   # a .sln covers the .csproj files in and under its folder
+
+  [kind.actions.restore]
+  cmd = ["dotnet", "restore", "{file}", "-tl:off"]
+  ask = true
+  why = "downloads the NuGet packages the project lists, which can run their own build steps"
+  timeout = 600
+
+  [kind.actions.build]
+  cmd = ["dotnet", "build", "{file}", "--no-restore", "--nologo", "-tl:off", "-v", "q"]
+  needs = ["file:obj/project.assets.json"]
+  timeout = 600
+
+  [kind.actions.test]
+  # the console logger at normal prints each failed test's message and stack (with -v q alone only "[FAIL]");
+  # ASP.NET's request logging is turned down so those lines aren't buried
+  cmd = ["dotnet", "test", "{file}", "--no-restore", "--nologo", "-tl:off", "-v", "q",
+         "--logger", "console;verbosity=normal"]
+  when = ["test-project"]
+  needs = ["file:obj/project.assets.json"]
+  timeout = 900
+  env = { Logging__LogLevel__Default = "Warning", Logging__LogLevel__Microsoft = "Warning" }
+
+[[kind]]
+name = "node"
+markers = ["package.json"]
+
+  [kind.actions.restore]
+  cmd = ["npm", "ci", "--no-audit", "--no-fund"]
+  when = ["file:package-lock.json"]
+  ask = true
+  why = "downloads the npm packages in package-lock.json, which can run their own install scripts"
+  timeout = 900
+
+  [kind.actions.build]
+  cmd = ["npm", "run", "build"]
+  when = ["script:build"]
+  needs = ["deps-installed"]
+  timeout = 600
+
+  [kind.actions.test]
+  cmd = ["npm", "test"]
+  when = ["script:test"]
+  needs = ["deps-installed"]
+  timeout = 900
+
+  [kind.actions.lint]
+  cmd = ["npm", "run", "lint"]
+  when = ["script:lint"]
+  needs = ["deps-installed"]
+  timeout = 300
+
+  [kind.actions.typecheck]
+  cmd = ["npx", "--no-install", "tsc", "--noEmit"]
+  when = ["file:tsconfig.json"]
+  needs = ["file:node_modules/.bin/tsc.cmd"]
+  timeout = 300
+
+[[kind]]
+name = "php"
+markers = ["composer.json"]
+
+  [kind.actions.restore]
+  cmd = ["composer", "install", "--no-interaction"]
+  ask = true
+  why = "downloads the Composer packages, which can run their own scripts"
+  timeout = 900
+
+  [kind.actions.test]
+  cmd = ["composer", "test"]
+  when = ["script:test"]
+  needs = ["file:vendor/autoload.php"]
+  timeout = 900
+
+# Asked on screen first, never run freely (Day 3 onwards: the Builder asks for these by name)
+[ask_first]
+add_package = "adds a new dependency (npm install <pkg>, dotnet add package)"
+migrate_database = "changes a real database (EF migrations, SQL against a server)"
+deploy = "runs a deploy script or copies to a server"
+
+# What the Builder and Checker are told about this stack
+[notes]
+text = """
+- ASP.NET Core 8: minimal APIs or controllers as the project already uses; nullable reference types on;
+  async all the way (no .Result/.Wait()); return Results.NotFound()/BadRequest() rather than throwing.
+- EF Core: never edit an existing migration; a schema change is a new migration, and applying it to a real
+  database is an ask-first action.
+- React (Vite): function components and hooks; keep the project's styling approach; no new UI library
+  without asking.
+- JavaScript in the browser: no secrets in client code; fetch relative /api paths.
+- Keep the code style of the file you change (naming, quotes, indentation).
+"""

@@ -14,6 +14,7 @@ db/
 03-invoices/output/
 04-research/reports/
 05-eval/fixtures/invoices/
+05-eval/golden-jobs/.runs/
 
 # Image and music models (Create tab), downloaded on first use
 .hf/

@@ -27,6 +27,39 @@ promptfoo view
 
 `-j 1` runs one test at a time; with 12 GB of VRAM, parallel tests make Ollama swap models.
 
+## Golden jobs (coding team)
+
+`golden-jobs\` holds small client-style coding tasks with hidden checks, used to pick and measure the coding
+team's models (see `docs\coding-team-blueprint.md`). Each job has `task.md` (all the model is told), `start\`
+(the client's code), `hidden\` (tests copied in only while checking) and `job.json` (the check command).
+Every job fails as given and passes with a reference solution.
+
+| Job | Stack | Check |
+|---|---|---|
+| `web-01-todo-api` | ASP.NET Core 8 minimal API + xUnit | `dotnet test`: GET/DELETE by id with 404s, 400 on empty titles, trimmed titles |
+| `web-02-shop-cart` | Plain JavaScript modules | `node --test`: rounding bug + discount codes with edge cases |
+
+```powershell
+.\.venv\Scripts\python.exe 05-eval\golden-jobs\bakeoff.py --models qwen2.5-coder:7b qwen2.5-coder:14b
+```
+
+The model works through the Code tab's own pipeline, on this PC only. A failed check gives the model the
+check's output and one more try (`--tries`); `--repeat` runs each job several times. Results and every reply go
+to `golden-jobs\.runs\<time>\`.
+
+First bake-off (2026-11-25, 2 runs × 2 tries): `qwen3-coder:30b` 2/4 (both API runs on the first try),
+`qwen2.5-coder:7b` 2/4, `qwen2.5-coder:14b` 1/4; nobody passed the cart job yet. Before the parser fix in
+`wb_code.py` the same models had scored 0-1 of 2. Details in `docs\coding-team-blueprint.md`.
+
+`--pipeline builder` runs the coding team's Builder instead (SEARCH/REPLACE edits, then the Runner builds and
+tests, up to 3 tries per round; restores of the golden jobs' own packages are allowed by the bake-off). Day 3
+(2026-11-25, `qwen3-coder:30b`, 3 runs × 2 rounds): todo API 3/3, each on the first try; cart 0/3 (the same 2 of
+16 checks each time).
+
+```powershell
+.\.venv\Scripts\python.exe 05-eval\golden-jobs\bakeoff.py --models qwen3-coder:30b --pipeline builder --repeat 3
+```
+
 ## Results
 
 | Run | RAG | Invoices |

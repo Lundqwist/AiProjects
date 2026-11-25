@@ -337,15 +337,31 @@ def _with_identity(messages: list[dict], model: str) -> list[dict]:
     return [{"role": "system", "content": note}] + messages
 
 
-def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: float) -> tuple[str, bool, tuple]:
+MIN_CTX, MAX_CTX, CTX_STEP = 16384, 49152, 8192
+
+
+def context_size(messages: list[dict], max_tokens: int) -> int:
+    """An Ollama context big enough for the prompt and the whole answer.
+
+    With a fixed 16,384 the Code tab sent ~17,000 tokens of project and asked for 16,000 back: Ollama
+    dropped the start of the prompt and cut the answer off, so its half-written files were thrown away.
+    Code is ~3 characters per token. Rounded up in steps, so Ollama doesn't reload the model for every
+    small change in size; capped so the model and its cache still fit next to each other in memory."""
+    need = sum(len(m.get("content") or "") for m in messages) // 3 + max_tokens + 1024
+    return max(MIN_CTX, min(MAX_CTX, -(-need // CTX_STEP) * CTX_STEP))
+
+
+def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: float,
+           max_tokens: int = 8000) -> tuple[str, bool, tuple]:
     model = expert_model(s, key)
     messages = _with_identity(messages, model)
     extra = {}
     if model.startswith(THINKERS):
         extra["think"] = key == "reasoning"  # the reasoning expert thinks first; others answer at once
-    client = ollama.Client(timeout=600)
-    opts = {"temperature": temperature, "num_ctx": 16384}
-    with wb_trace.span("model", model, expert=EXPERTS[key].name, thinks=bool(extra.get("think"))) as sp:
+    client = ollama.Client(timeout=1800)  # big local jobs are slow, and that is fine
+    opts = {"temperature": temperature, "num_ctx": context_size(messages, max_tokens), "num_predict": max_tokens}
+    with wb_trace.span("model", model, expert=EXPERTS[key].name, thinks=bool(extra.get("think")),
+                       context=opts["num_ctx"]) as sp:
         if on_text is None:
             resp = client.chat(model=model, messages=messages, options=opts, **extra)
             msg = resp.message
@@ -446,7 +462,7 @@ def ask(s: Settings, messages: list[dict], *, task: str = "chat", expert: str | 
     wb_trace.event("route", f"{EXPERTS[key].name} on this PC", why=why or "it fits the question",
                    online=("none had tokens left" if go else "not wanted for this job") if s.online_mode != "off"
                    else "turned off in Settings", notes=list(notes))
-    text, thought, tokens = _local(s, key, messages, on_text, temperature)
+    text, thought, tokens = _local(s, key, messages, on_text, temperature, max_tokens)
     model = expert_model(s, key)
     return Answer(text, f"{EXPERTS[key].name} ({model})", "on this PC", why, False, tokens, notes, thought)
 

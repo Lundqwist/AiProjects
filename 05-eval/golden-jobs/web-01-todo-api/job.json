@@ -1,0 +1,6 @@
+{
+  "name": "web-01-todo-api",
+  "pack": "web",
+  "check": ["dotnet", "test", "TodoApi.Tests", "--nologo", "-v", "q", "--logger", "console;verbosity=normal"],
+  "timeout": 300
+}

@@ -145,36 +145,107 @@ HEADER = re.compile(r"^\s*(?:#{1,6}\s*|\*\*|=+\s*)?(?:file\s*:\s*)?[`*]*"
                     r"[`*]*\s*(?:\*\*|=+)?\s*:?\s*$", re.I)
 
 
-def _blocks(reply: str) -> list[tuple[int, int, str, str]]:
-    """(first line, end line, path, content) per file. A file runs from its heading to the next file
-    heading, so code blocks inside it (a README's examples) stay part of it."""
-    lines = reply.split("\n")
-    heads = []
-    for i, line in enumerate(lines):
-        m = HEADER.match(line)
-        if not m:
+# Models don't keep to the format. Seen from qwen2.5-coder in the golden-job runs (2026-11-25):
+#   "### Changes to `Program.cs`" + a sentence + the code   -> was ignored, and correct code was lost
+#   "### Updated `src/cart.js`:"                            -> was ignored
+#   the last file followed by "### How to Run" with ```sh blocks -> was glued into the last file
+# So a markdown heading (or bold line) that names exactly one file also counts, with up to MAX_PROSE lines
+# of prose before its code, and a file's code ends at its own closing fence, not at the last one found.
+FILE_TOKEN = re.compile(r"(?:[\w.-]+[/\\])*(?:[\w-][\w.-]*\.[A-Za-z]\w*|Dockerfile|Makefile)")
+LOOSE_HEADING = re.compile(r"^\s*(?:#{1,6}\s+\S.*|\*\*[^*]+\*\*\s*:?)\s*$")
+MAX_PROSE = 4
+MARKDOWN = {".md", ".markdown"}
+SHRINK = 0.6  # a loosely named block this much shorter than the file is a fragment, not the whole file
+
+
+def _named_file(line: str) -> tuple[str, bool] | None:
+    """(path, strict) if the line names one file: strict = the asked-for "=== FILE: x ===" style."""
+    m = HEADER.match(line)
+    if m:
+        return m.group(1), True
+    if not LOOSE_HEADING.match(line):
+        return None
+    names = {t for t in FILE_TOKEN.findall(line)
+             if Path(t).suffix.lower() in TEXT_SUFFIXES or Path(t).name in ("Dockerfile", "Makefile")}
+    return (names.pop(), False) if len(names) == 1 else None
+
+
+def _close(lines: list[str], fence: int, end: int, markdown: bool) -> int | None:
+    """The line that closes the code block opened at `fence`. In Markdown files, ```lang lines open
+    nested example blocks, so fences are counted; in code files the first bare ``` closes it."""
+    depth = 1
+    for k in range(fence + 1, end):
+        s = lines[k].strip()
+        if not s.startswith("```"):
             continue
-        j = i + 1
-        while j < len(lines) and not lines[j].strip():
-            j += 1
-        if j < len(lines) and lines[j].lstrip().startswith("```"):
-            heads.append((i, j, m.group(1)))
-    out = []
-    for n, (i, fence, path) in enumerate(heads):
-        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
-        close = max((k for k in range(fence + 1, end) if lines[k].strip() == "```"), default=None)
+        if s.strip("`") == "":
+            depth -= 1
+            if depth == 0:
+                return k
+        elif markdown:
+            depth += 1
+    return None
+
+
+def _blocks(reply: str, unfinished: list[str] | None = None) -> list[tuple[int, int, str, str, bool]]:
+    """(first line, end line, path, content, strict) per file. Files whose code block never closes
+    (the reply was cut off) are left out and their paths added to `unfinished`."""
+    lines = reply.split("\n")
+    n, out, i = len(lines), [], 0
+    while i < n:
+        if lines[i].strip().startswith("```"):  # a code block with no file name (an example): skip it whole,
+            close = _close(lines, i, n, False)  # so a "# reads config.json" comment in it is never a heading
+            i = n if close is None else close + 1
+            continue
+        named = _named_file(lines[i])
+        fence = None
+        if named:
+            j, prose = i + 1, 0
+            while j < n:
+                s = lines[j].strip()
+                if s.startswith("```"):
+                    fence = j
+                    break
+                if s and (_named_file(lines[j]) or LOOSE_HEADING.match(lines[j])):
+                    break  # another heading before any code: this heading had none
+                if s:
+                    prose += 1
+                    if prose > (1 if named[1] else MAX_PROSE):
+                        break
+                j += 1
+        if fence is None:
+            i += 1
+            continue
+        path, strict = named
+        # a strict "=== FILE: ===" line always starts the next file, even if this one never closed
+        bound = next((k for k in range(fence + 1, n) if HEADER.match(lines[k]) and lines[k].lstrip().startswith("=")), n)
+        close = _close(lines, fence, bound, Path(path).suffix.lower() in MARKDOWN)
         if close is None:
-            continue  # an unfinished file (the reply was cut off): better none than half of one
-        out.append((i, close + 1, path, "\n".join(lines[fence + 1:close])))
+            if unfinished is not None:
+                unfinished.append(path)  # an unfinished file (the reply was cut off): better none than half of one
+            i = bound
+            continue
+        out.append((i, close + 1, path, "\n".join(lines[fence + 1:close]), strict))
+        i = close + 1
     return out
 
 
-def parse(reply: str, folder: Path) -> tuple[str, list[Change]]:
-    """(explanation, changes) from the expert's reply. Paths outside the folder are refused."""
+def _existing(folder: Path, rel: str) -> str:
+    """A bare file name ("Program.cs") that isn't in the project root means the one file of that name
+    elsewhere in the project, if there is exactly one."""
+    if "/" in rel or (folder / rel).exists():
+        return rel
+    same = [p for p in project_files(folder) if p.name.lower() == rel.lower()] if folder.is_dir() else []
+    return same[0].relative_to(folder).as_posix() if len(same) == 1 else rel
+
+
+def parse(reply: str, folder: Path, notes: list[str] | None = None) -> tuple[str, list[Change]]:
+    """(explanation, changes) from the expert's reply. Paths outside the folder are refused.
+    What was left out and why is added to `notes`."""
     folder = Path(folder).resolve()
     changes, blocks = [], _blocks(reply)
-    for _, _, path, content in blocks:
-        rel = path.replace("\\", "/").lstrip("/")
+    for _, _, path, content, strict in blocks:
+        rel = _existing(folder, path.replace("\\", "/").lstrip("/"))
         target = (folder / rel).resolve()
         if folder not in target.parents:
             continue
@@ -182,9 +253,16 @@ def parse(reply: str, folder: Path) -> tuple[str, list[Change]]:
         text = content.rstrip("\n") + "\n"
         if old is not None and old.replace("\r\n", "\n") == text:
             continue  # unchanged
+        if old is not None and not strict:
+            before, after = len(old.splitlines()), len(text.splitlines())
+            if before >= 15 and after < before * SHRINK:
+                if notes is not None:
+                    notes.append(f"Left out {rel}: the code under its heading has {after} of the file's {before} "
+                                 "lines, so it looks like a part of the file, not the whole file")
+                continue
         changes = [c for c in changes if c.path != rel] + [Change(rel, text, old)]
     lines = reply.split("\n")
-    for start, end, path, _ in reversed(blocks):
+    for start, end, path, _, _ in reversed(blocks):
         lines[start:end] = [f"*(file: `{path}`)*"]
     return "\n".join(lines).strip(), changes
 
@@ -210,15 +288,21 @@ def apply(folder: Path, changes: list[Change]) -> list[str]:
 
 
 def _ask(s: Settings, user: str, big: bool | None, on_text=None) -> wb_ai.Answer:
-    return wb_ai.ask(s, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
-                     task="code", expert="code", big=big, temperature=0.2, max_tokens=16000, on_text=on_text)
+    a = wb_ai.ask(s, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+                  task="code", expert="code", big=big, temperature=0.2, max_tokens=16000, on_text=on_text)
+    cut: list[str] = []
+    _blocks(a.text, cut)
+    if cut:  # say so, instead of quietly showing fewer files than the explanation promises
+        a.notes.append(f"The answer was cut off before {', '.join(cut)} was finished, so it was left out. "
+                       "Ask again for that file only, or select fewer files.")
+    return a
 
 
 def new_project(s: Settings, folder: Path, description: str, big: bool | None = None, on_text=None):
     """(explanation, changes, answer) for a new project in an empty or missing folder."""
     a = _ask(s, f"Create a new project named '{Path(folder).name}'.\n\nWhat it should do:\n{description}\n\n"
                 "Include a README.md that says what it is and exactly how to run it on Windows.", big, on_text)
-    return (*parse(a.text, folder), a)
+    return (*parse(a.text, folder, a.notes), a)
 
 
 def change(s: Settings, folder: Path, request: str, only: list[Path] | None = None, big: bool | None = None,
@@ -227,7 +311,7 @@ def change(s: Settings, folder: Path, request: str, only: list[Path] | None = No
     base = folder if Path(folder).is_dir() else Path(folder).parent
     a = _ask(s, f"The project's files:\n\n{files}\n\nWhat to change:\n{request}", big, on_text)
     a.notes = notes + a.notes
-    return (*parse(a.text, base), a)
+    return (*parse(a.text, base, a.notes), a)
 
 
 def explain(s: Settings, folder: Path, mode: str = "explain", question: str = "", only: list[Path] | None = None,
