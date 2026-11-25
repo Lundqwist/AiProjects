@@ -165,7 +165,10 @@ def _feedback(outcomes: list[edits.Outcome], parsed: edits.Parsed, results: list
               repo: Path, client_tests: set[str], own_tests: set[str]) -> str:
     out = []
     if parsed.problems:
-        out.append("Parts of your reply couldn't be read:\n" + "\n".join(f"- {p}" for p in parsed.problems))
+        out.append("Parts of your reply couldn't be read, so they were NOT applied:\n"
+                   + "\n".join(f"- {p}" for p in parsed.problems))
+    if parsed.notes:
+        out.append("\n".join(f"- {n}" for n in parsed.notes))
     if outcomes:
         out.append("Your edits:\n" + edits.report(outcomes))
     elif not parsed.problems:
@@ -277,8 +280,10 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         # a refused edit is a change the Builder meant and didn't get: no pass on top of it (Day 4: a refused fix
         # plus two disputes counted as done). Refusing an edit to the client's tests is meant, and doesn't count.
         missed = [o for o in outcomes if not o.ok and o.edit.path not in client_tests]
+        # a block that couldn't be read is a change the Builder meant and didn't get: never a pass on top of it
+        # (Day 6: a new file it wrote in a form the parser didn't know was dropped, and the rest built and passed)
         rec.ok = (answered and bool(results) and all(r.ok for r in results) and not unfinished and not missed
-                  and not (len(outcomes) == 0 and parsed.problems and not parsed.disputes))
+                  and not parsed.problems)
         if rec.ok:
             result.status = "pass"
             break
@@ -286,7 +291,7 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         # "1s 20c"), and it bends correct code to fit, or never passes. After one try to sort it out itself, a
         # step where everything builds and only its own tests fail goes to the Checker, which decides whether the
         # test or the code is wrong.
-        if answered and results and not unfinished and not missed and n >= 2:
+        if answered and results and not unfinished and not missed and not parsed.problems and n >= 2:
             builds_ok = all(r.ok for r in results if r.action == "build")
             c, o = failing_owners(repo, results, client_tests, own_tests)
             if builds_ok and o and not c:

@@ -1,0 +1,6 @@
+{
+  "name": "tizen-01-tv-remote",
+  "pack": "tizen",
+  "check": ["node", "--test"],
+  "timeout": 120
+}

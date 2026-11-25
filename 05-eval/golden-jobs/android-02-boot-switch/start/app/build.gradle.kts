@@ -1,0 +1,27 @@
+plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.example.nightwatch"
+    compileSdk {
+        version = release(36) { minorApiLevel = 1 }
+    }
+
+    defaultConfig {
+        applicationId = "com.example.nightwatch"
+        minSdk = 29
+        targetSdk = 36
+        versionCode = 7
+        versionName = "2.1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}

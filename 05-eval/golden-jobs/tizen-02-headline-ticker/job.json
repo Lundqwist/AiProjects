@@ -1,0 +1,6 @@
+{
+  "name": "tizen-02-headline-ticker",
+  "pack": "tizen",
+  "check": ["node", "--test"],
+  "timeout": 120
+}

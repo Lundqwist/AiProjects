@@ -1,0 +1,64 @@
+# Stack pack: android (Gradle Android apps, Java or Kotlin; first: the LunarWake setup, AGP 9, Gradle 9)
+#
+# See web.toml for the format. {env:NAME} = an environment variable. Builds run with Android Studio's own Java
+# (JBR, 17+: the java on PATH is 11, too old for AGP 9) and --offline: everything comes from Gradle's cache.
+# The one action that downloads (restore) asks first. Installing on the phone (adb install) asks first.
+
+name = "android"
+title = "Android apps (Gradle)"
+
+[[kind]]
+name = "android-gradle"
+markers = ["settings.gradle.kts", "settings.gradle"]
+requires = ["file:gradlew.bat"]
+
+  [kind.actions.restore]
+  cmd = ["{dir}/gradlew.bat", "assembleDebug", "testDebugUnitTest", "--console=plain", "-q"]
+  ask = true
+  why = "builds once with network access, so Gradle downloads what the project lists (plugins, libraries) into its cache"
+  timeout = 1200
+  env = { JAVA_HOME = "C:/Program Files/Android/Android Studio/jbr", ANDROID_HOME = "{env:LOCALAPPDATA}/Android/Sdk" }
+
+  [kind.actions.build]
+  # packs\android\build.js checks that every class AndroidManifest.xml names exists, then runs
+  # gradlew assembleDebug --offline --console=plain -q
+  cmd = ["node", "{packdir}/android/build.js", "{dir}"]
+  timeout = 900
+  env = { JAVA_HOME = "C:/Program Files/Android/Android Studio/jbr", ANDROID_HOME = "{env:LOCALAPPDATA}/Android/Sdk" }
+
+  [kind.actions.test]
+  cmd = ["{dir}/gradlew.bat", "testDebugUnitTest", "--offline", "--console=plain", "-q",
+         "-I", "{packdir}/android/test-logging.gradle"]   # prints each failed test with its message
+  when = ["glob:**/*Test.java"]
+  timeout = 900
+  env = { JAVA_HOME = "C:/Program Files/Android/Android Studio/jbr", ANDROID_HOME = "{env:LOCALAPPDATA}/Android/Sdk" }
+
+  [kind.actions.lint]
+  cmd = ["{dir}/gradlew.bat", "lintDebug", "--offline", "--console=plain", "-q"]
+  timeout = 900
+  env = { JAVA_HOME = "C:/Program Files/Android/Android Studio/jbr", ANDROID_HOME = "{env:LOCALAPPDATA}/Android/Sdk" }
+
+[ask_first]
+install_phone = "installs the app on MoonPhoneS25 (adb install) or starts it there"
+add_dependency = "adds a library to build.gradle(.kts), which needs a download"
+release_signing = "signs a release build"
+
+[notes]
+text = """
+- Java 17 language level (the project's compileOptions); no Kotlin unless the project already has Kotlin.
+- AGP 9 + Gradle 9: dependencies only in app/build.gradle.kts; a new library is an ask-first change, so prefer the
+  Android SDK and the Java standard library. Unit tests are JUnit 4 (org.junit.Test, org.junit.Assert.*) in
+  app/src/test/java; they run on the PC's JVM, so code they test must not call android.* classes (keep logic in
+  plain Java classes and let the Activity call them).
+- Resources: user-visible text in res/values/strings.xml (@string/...), layouts in res/layout, ids @+id/name in
+  snake_case. Look views up with findViewById(R.id.name).
+- AndroidManifest.xml: every permission the code needs (<uses-permission android:name="android.permission.X"/>),
+  every Activity, Service and BroadcastReceiver, each with android:exported set when it has an intent-filter.
+- Java pitfalls: byte is signed (0xC0 is -64): use (b & 0xFF) when a byte becomes a number, and long or >>> for
+  32-bit masks. Integer.parseInt also accepts a leading + or -, and parses "7" as well as "07": check the text
+  with a regex (e.g. [0-9A-Fa-f]{2}) before parsing when the format matters. Compare strings with equals().
+- Network and other blocking work never on the main thread (a Thread or an Executor), and UI changes back on it
+  (runOnUiThread). Since Android 13, notifications need POST_NOTIFICATIONS at run time.
+- Since Android 8, implicit broadcasts mostly don't reach manifest receivers; BOOT_COMPLETED still does (it needs
+  the RECEIVE_BOOT_COMPLETED permission).
+"""

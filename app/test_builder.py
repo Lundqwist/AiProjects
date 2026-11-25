@@ -80,9 +80,19 @@ check("a block without a header and a cut-off file are reported, not guessed",
 block = "=== EDIT: a.js ===\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\n"
 p = edits.parse(block * 3 + "=== EDIT: a.js ===\n<<<<<<< SEARCH\nz\n=======\nz\n>>>>>>> REPLACE\n"
                 "DISPUTE: 2 - a.js:4 already returns 0\n")
-check("repeated blocks and blocks that change nothing are dropped and reported; DISPUTE is read",
-      len(p.edits) == 1 and len(p.problems) == 2 and p.disputes == ["2 - a.js:4 already returns 0"],
-      f"{len(p.edits)} {p.problems} {p.disputes}")
+check("repeated blocks and blocks that change nothing are dropped and noted (not problems); DISPUTE is read",
+      len(p.edits) == 1 and len(p.notes) == 2 and not p.problems and p.disputes == ["2 - a.js:4 already returns 0"],
+      f"{len(p.edits)} {p.notes} {p.problems} {p.disputes}")
+p = edits.parse("=== FILE: src/Boot.java ===\n<<<<<<< SEARCH\nclass Boot { // TODO }\n=======\nclass Boot {\n  int x;\n}\n"
+                ">>>>>>> REPLACE\n")
+check("=== FILE: followed by SEARCH/REPLACE is read as a new file written as an edit",
+      len(p.edits) == 1 and p.edits[0].create_if_missing and not p.problems, f"{p.edits} {p.problems}")
+fresh = TMP / "fresh"
+fresh.mkdir()
+out = edits.apply(fresh, p.edits)
+check("... and creates the file from REPLACE when it doesn't exist",
+      out[0].ok and (fresh / "src" / "Boot.java").read_text(encoding="utf-8") == "class Boot {\n  int x;\n}\n",
+      edits.report(out))
 check("NEEDS_APPROVAL is read", edits.parse("NEEDS_APPROVAL: dayjs for date maths").needs_approval
       == ["dayjs for date maths"])
 

@@ -223,7 +223,8 @@ def create(jobs_root: Path, client: str, title: str, source: str) -> Job:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as f:
             f.write("\n# AI Workbench: build output\n"
-                    + "".join(f"{d}/\n" for d in sorted(runner.SKIP_DIRS - {".git"})) + "*.user\nTestResults/\n")
+                    + "".join(f"{d}/\n" for d in sorted(runner.SKIP_DIRS - {".git"}))
+                    + "*.user\nTestResults/\n.gradle/\n.kotlin/\nlocal.properties\n.buildResult/\n.sign/\n")
         (folder / "base-commit").write_text(git(job.repo, "rev-parse", "HEAD") + "\n", encoding="utf-8")
     except Exception:
         shutil.rmtree(folder, ignore_errors=True)

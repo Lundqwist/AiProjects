@@ -1,0 +1,50 @@
+# Stack pack: tizen (Samsung TV web apps: Tizen 5.5, LunarTV Q65T, its browser is about Chrome 69)
+#
+# See web.toml for the format. {packdir} = this folder. The build check is packs\tizen\check.js, run with Node:
+# ES2018 syntax (acorn, copied into packs\tizen\vendor, MIT), built-ins newer than Chrome 69, config.xml privileges
+# and start page. Tests: Node's own test runner over *.test.js files (the app's scripts loaded in a vm sandbox).
+# Packaging signs with your Samsung certificate and installing touches the TV: both ask first.
+
+name = "tizen"
+title = "Samsung TV apps (Tizen web apps)"
+
+[[kind]]
+name = "tizen-web"
+markers = ["config.xml"]
+requires = ["contains:config.xml:http://tizen.org/ns/widgets"]
+
+  [kind.actions.build]
+  cmd = ["node", "{packdir}/tizen/check.js", "{dir}"]
+  timeout = 120
+
+  [kind.actions.test]
+  cmd = ["node", "--test"]
+  when = ["glob:**/*.test.js"]
+  timeout = 300
+
+  [kind.actions.package]
+  cmd = ["C:/tizen-studio/tools/ide/bin/tizen.bat", "package", "-t", "wgt", "-s", "LunarTV", "--", "{dir}"]
+  ask = true
+  why = "signs the app with your Samsung certificate profile LunarTV and writes a .wgt"
+  timeout = 300
+
+[ask_first]
+install_tv = "installs or starts the app on LunarTV (sdb / tizen install, tizen run)"
+
+[notes]
+text = """
+- The TV's browser is about Chrome 69 (ES2018). Never: ?. or ?? (write a && a.b, a != null ? a : b), class fields,
+  numeric separators, Object.fromEntries, String.replaceAll/matchAll, Array.at, Promise.allSettled, globalThis.
+  Fine: let/const, arrow functions, template strings, classes without fields, async/await, fetch, Promise.
+- Plain scripts loaded by <script src> in index.html, in order: no ES modules, no bundler, no npm packages.
+  A file exposes what others need as one global object (var Remote = (function () { ... return {...}; })();).
+- Remote control: keydown events. keyCode 37 left, 38 up, 39 right, 40 down, 13 OK/Enter, 10009 Back (Return),
+  403 red, 404 green, 405 yellow, 406 blue, 415 play, 19 pause, 412 rewind, 417 fast forward. Arrows, OK and Back
+  arrive without registering; every other key must be registered first:
+  tizen.tvinputdevice.registerKey("ColorF0Red") (Green: ColorF1Green, Yellow: ColorF2Yellow, Blue: ColorF3Blue,
+  MediaPlayPause, ...). That needs <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/> in
+  config.xml. Guard it: if (window.tizen && tizen.tvinputdevice) { ... }, so the app also runs in a desktop browser.
+- Back on the top screen exits the app: tizen.application.getCurrentApplication().exit() (guarded the same way).
+- Network calls need <tizen:privilege name="http://tizen.org/privilege/internet"/> and an <access origin=...>.
+- The screen is 1920x1080, seen from a sofa: big text, one visibly focused element, nothing that needs a mouse.
+"""

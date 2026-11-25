@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,7 +53,13 @@ def check(job: dict, folder: Path, hidden: Path) -> tuple[bool, str, float]:
     started = time.monotonic()
     try:
         env = {**os.environ, "Logging__LogLevel__Default": "Warning", "Logging__LogLevel__Microsoft": "Warning"}
-        r = subprocess.run(job["check"], cwd=folder, capture_output=True, text=True, encoding="utf-8", env=env,
+        env.update({k: re.sub(r"\{env:(\w+)\}", lambda m: os.environ.get(m.group(1), ""), v)
+                    for k, v in job.get("env", {}).items()})
+        packdir = str(HERE.parents[1] / "app" / "team" / "packs")
+        cmd = [c.replace("{packdir}", packdir) for c in job["check"]]
+        if (folder / cmd[0]).exists():   # gradlew.bat in the job: Windows doesn't look in cwd for programs
+            cmd[0] = str(folder / cmd[0])
+        r = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, encoding="utf-8", env=env,
                            errors="replace", timeout=job.get("timeout", 300), shell=False,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         ok, out = r.returncode == 0, (r.stdout + "\n" + r.stderr).strip()

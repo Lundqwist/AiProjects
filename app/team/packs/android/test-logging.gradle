@@ -1,0 +1,17 @@
+// Init script for the android pack (gradlew -I this file): every failed unit test is printed with its name,
+// message and the line in the test, even with -q. Without it Gradle says only "8 tests completed, 2 failed",
+// and the Builder and Checker can't tell what failed (Day 6). Changes nothing in the client's project.
+allprojects {
+    tasks.withType(Test).configureEach {
+        testLogging {
+            events "failed"
+            exceptionFormat "full"
+            showCauses true
+            showStackTraces true
+            quiet {
+                events "failed"
+                exceptionFormat "full"
+            }
+        }
+    }
+}

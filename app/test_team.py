@@ -150,6 +150,49 @@ check("no test action without tests/run.lua", runner.plan(lua_repo, "test") == [
 r = runner.run(lua_repo, "test")
 check("tests/run.lua is the test action", len(r) == 1 and r[0].ok, runner.report(r, "test"))
 
+# ---- the tizen and android packs ----------------------------------------------------------------
+
+tv = TMP / "tv-repo"
+(tv / "other").mkdir(parents=True)
+(tv / "other" / "config.xml").write_text("<widget><content src='x.html'/></widget>", encoding="utf-8")  # Cordova-like
+(tv / "app" / "js").mkdir(parents=True)
+(tv / "app" / "config.xml").write_text('<widget xmlns:tizen="http://tizen.org/ns/widgets"><content src="index.html"/>'
+                                       '</widget>', encoding="utf-8")
+(tv / "app" / "index.html").write_text('<script src="js/a.js"></script>', encoding="utf-8")
+(tv / "app" / "js" / "a.js").write_text("var A = { name: cfg && cfg.name };\n", encoding="utf-8")
+check("a config.xml is a Tizen app only with the Tizen namespace",
+      [p.rel(tv) for p in runner.find_projects(tv)] == ["app/config.xml"] and runner.detect(tv) == ["tizen"])
+r = runner.run(tv, "build")
+check("the tizen build check passes ES2018 code", len(r) == 1 and r[0].ok, runner.report(r, "build"))
+(tv / "app" / "js" / "a.js").write_text("var A = { name: cfg?.name ?? 'TV' };\n", encoding="utf-8")
+r = runner.run(tv, "build")[0]
+check("the tizen build check refuses ?. and ?? with the line", not r.ok and any("js/a.js:1:" in e and "Chrome 69" in e
+                                                                              for e in r.errors), r.summary())
+check("no tizen test action without *.test.js files", runner.plan(tv, "test") == [])
+(tv / "app" / "tests").mkdir()
+(tv / "app" / "tests" / "a.test.js").write_text("require('node:test')('x', () => {});\n", encoding="utf-8")
+check("node --test is the tizen test action once there are tests",
+      [s.command[:2] for s in runner.plan(tv, "test")] == [["node", "--test"]])
+
+droid = TMP / "android-repo"
+(droid / "app").mkdir(parents=True)
+(droid / "settings.gradle.kts").write_text('include(":app")\n', encoding="utf-8")
+(droid / "gradlew.bat").write_text("@echo off\n", encoding="utf-8")
+check("an Android project is found by settings.gradle.kts with gradlew.bat",
+      [p.rel(droid) for p in runner.find_projects(droid)] == ["settings.gradle.kts"] and runner.detect(droid) == ["android"])
+b = runner.plan(droid, "build")[0]
+check("android builds through the manifest check, with Android Studio's Java and the SDK from the environment",
+      b.command[0] == "node" and b.command[1].endswith("android/build.js")
+      and b.env.get("JAVA_HOME", "").endswith("Android Studio/jbr")
+      and b.env.get("ANDROID_HOME", "").endswith("Android/Sdk") and "{env:" not in b.env["ANDROID_HOME"], str(b.env))
+(droid / "app" / "src" / "test" / "java").mkdir(parents=True)
+(droid / "app" / "src" / "test" / "java" / "ATest.java").write_text("class ATest {}\n", encoding="utf-8")
+t = runner.plan(droid, "test")[0]
+check("android tests run offline, with every failed test printed",
+      "--offline" in t.command and any(c.endswith("android/test-logging.gradle") for c in t.command), str(t.command))
+check("android restore asks first, and is the only action without --offline",
+      all(s.ask and "--offline" not in s.command for s in runner.plan(droid, "restore")))
+
 # ---- job card -----------------------------------------------------------------------------------
 
 card = jobs.JobCard("Add booking page", "Acme", "web", "Customers can book a time",

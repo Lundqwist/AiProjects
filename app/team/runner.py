@@ -27,7 +27,7 @@ from typing import Callable
 PACKS_DIR = Path(__file__).resolve().parent / "packs"
 SKIP_DIRS = {".git", "node_modules", "bin", "obj", "dist", "build", "vendor", ".venv", "venv", "__pycache__",
              ".vs", ".idea", ".workbench-history", "packages", "out", "coverage", ".next", ".nuxt"}
-ACTIONS = ("restore", "build", "test", "lint", "typecheck")
+ACTIONS = ("restore", "build", "test", "lint", "typecheck", "package")
 TAIL = 200   # lines of output kept (the Checker's probes read every test's ok / not ok line from it)
 SECRET_ENV = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|_KEY$|CREDENTIAL|PRIVATE|CONNECTIONSTRING|_PAT$|COOKIE",
                         re.I)
@@ -86,7 +86,9 @@ def find_projects(repo: Path, packs: dict | None = None) -> list[Project]:
             for kind in pack.get("kind", []):
                 for f in files:
                     if any(fnmatch.fnmatch(f, m) for m in kind["markers"]):
-                        found.append(Project(pname, kind["name"], here / f))
+                        p = Project(pname, kind["name"], here / f)
+                        if all(_when(p, c) for c in kind.get("requires", [])):
+                            found.append(p)
     slns = [p for p in found if p.file.suffix == ".sln"]
     if slns:  # a .csproj under a .sln's folder is built through the .sln
         found = [p for p in found if not (p.file.suffix == ".csproj"
@@ -144,6 +146,15 @@ def _when(p: Project, cond: str) -> bool:
         return (p.dir / arg).exists()
     if what == "test-project":
         return _is_test_project(p)
+    if what == "contains":   # contains:FILE:TEXT  - FILE in the project folder holds TEXT
+        name, _, text = arg.partition(":")
+        try:
+            return text in (p.dir / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+    if what == "glob":       # glob:PATTERN  - some file under the project folder matches (build output skipped)
+        pat = arg[3:] if arg.startswith("**/") else arg
+        return any(fnmatch.fnmatch(f, pat) for _, fs in _walk(p.dir) for f in fs)
     raise ValueError(f"unknown condition {cond!r}")
 
 
@@ -203,8 +214,10 @@ def plan(repo: Path, action: str, only: str | None = None, packs: dict | None = 
         cmd = [part.replace("{file}", str(p.file)).replace("{dir}", str(p.dir)).replace("{packdir}", str(PACKS_DIR))
                for part in spec["cmd"]]
         missing = next((m for m in (_missing(p, n) for n in spec.get("needs", [])) if m), None)
+        env = {k: re.sub(r"\{env:(\w+)\}", lambda m: os.environ.get(m.group(1), ""), str(v))
+               for k, v in spec.get("env", {}).items()}
         steps.append(Step(action, p, cmd, p.dir, int(spec.get("timeout", 300)), bool(spec.get("ask")),
-                          spec.get("why", ""), missing, {k: str(v) for k, v in spec.get("env", {}).items()}))
+                          spec.get("why", ""), missing, env))
     return steps
 
 

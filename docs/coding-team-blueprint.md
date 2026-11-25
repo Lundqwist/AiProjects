@@ -545,6 +545,46 @@ it sees only the requirements and the example test), a probe that errors in the 
 assertion) thrown away by the program instead of judged, and an unexplained failing probe dropped instead of
 counted against the code.
 
+## Day 6 results (2026-11-25)
+
+**The tizen pack** (`packs\tizen.toml`, `packs\tizen\check.js`, run with Node): every script parsed as ES2018 with
+acorn 8.19 (copied into `packs\tizen\vendor\acorn` from promptfoo's packages on this PC, MIT; nothing downloaded),
+built-ins newer than Chrome 69 (`Object.fromEntries`, `replaceAll`, `.at()`, `globalThis` …), `config.xml`'s start
+page and the privileges the code needs (`tv.inputdevice` for registerKey, `internet` for network calls), and the
+scripts `index.html` loads. A `config.xml` counts only with the Tizen namespace (kind-level `requires`). Tests:
+`node --test` when there are `*.test.js` files. `package` (signs with your LunarTV certificate) and installing on
+the TV ask first. TvDashboard passes the check clean; a planted bad app gave all 5 problems.
+
+**The android pack** (`packs\android.toml`): Android Studio's JBR as JAVA_HOME (the `java` on PATH is 11), the SDK
+from `%LOCALAPPDATA%`, everything `--offline`; restore (the only online action) asks first. Build =
+`packs\android\build.js`: every Activity/Service/Receiver/Provider the manifest names must exist as a class (Gradle
+doesn't check that; the app would crash), then `gradlew assembleDebug`. Tests: `gradlew testDebugUnitTest` with
+`packs\android\test-logging.gradle` (without it `-q` says only "8 tests completed, 2 failed"). JUnit 4.13.2 +
+hamcrest 1.3 were downloaded once with your OK (Gradle cache). Installing on the phone asks first.
+
+**Four golden jobs**, each failing as given and passing with a reference solution: `tizen-01-tv-remote` (grid
+focus, Back closes or exits, red key + its registration and privilege), `tizen-02-headline-ticker` (wrap, filter,
+dedupe, sort, cap, "time ago" texts), `android-01-wake-on-lan` (MAC parsing, broadcast address, packet size),
+`android-02-boot-switch` (a setting with migration, a layout switch, strings, a boot receiver in the manifest).
+
+End to end, 3 runs each, last run: **ticker 3/3, boot switch 2/3 (3/3 the run before), Wake-on-LAN 0/3, TV remote
+0/3** = 5 of 12; the Day 6 goal (3 of 4 jobs) is not met: 2 of 4.
+
+What the runs fixed (each from reading the job folders):
+
+1. **A new file the parser dropped**: the model wrote `=== FILE:` followed by a SEARCH/REPLACE block with made-up
+   "old" lines. That now creates the file from REPLACE. And any block that can't be read now blocks a pass; before,
+   the rest built and passed, and the missing BootReceiver went unnoticed (boot switch 0/3 → 3/3).
+2. **Gradle's -q hid which test failed**: the init script prints each failure with its message.
+3. **The manifest named a class that didn't exist**: the build check catches it.
+4. `.gradle\`, `.kotlin\` and `local.properties` were committed: now in the job repos' exclude list.
+5. Java pitfall notes (signed bytes, `Integer.parseInt` accepting `+1`) added to the pack after these runs hit
+   them; they didn't change the result.
+
+What still fails is the same as on Day 5: plausible code with an edge-case bug the reading Checker passes
+(Back swallowed by an early `if (state.open) return;`, a signed byte giving `-64.-88.-206.-1`, `+1` accepted as
+hex, a future time as "5 min ago"). The tooling now shows the failures clearly; the judging isn't good enough.
+
 ## START HERE FIRST
 
 **Day 1 is done** (2026-11-25): context overflow and file parser fixed, Git for Windows installed, two web golden
@@ -602,8 +642,17 @@ jobs and the bake-off written, Builder model chosen (`qwen3-coder:30b`, see Day 
 passing; got roll tracker 2/3, junk seller 0/3. All four jobs: 7 of 12 end to end.
 
 **Day 5b (Checker probes) was tried and is switched off** (see Day 5b): with `qwen3:8b` it was no better and six
-times slower. The remaining failures are still edge cases a reading Checker misses. Next: either probes done the
-way Day 5b ends with, or Day 6 (Tizen + Android).
+times slower.
+
+**Day 6 is done, goal not met** (2026-11-25; see Day 6 results): tizen and android packs, 4 golden jobs, 2 of them
+passing. All eight golden jobs now exist (2 per pack). Latest runs per job: todo API 3/3, cart 1/3, roll tracker
+3/3, junk seller 1/3, ticker 3/3, boot switch 2/3, Wake-on-LAN 0/3, TV remote 0/3.
+
+**The bottleneck is the Checker** (qwen3:8b reading code): almost every failure is a false PASS on an edge case.
+Options before or alongside Day 7: a stronger local Checker (for example the general `qwen3:30b`, a thinking MoE
+model that is not the Builder's coder model; a download of about 19 GB, so it needs your OK), then probes again with
+it. Day 7 (the Lead in the chat window + one real task) can go ahead either way: the review gate means a false PASS
+reaches you, not the client.
 
 Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would unload the model the
 CLI is about to use).

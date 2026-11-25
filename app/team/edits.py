@@ -50,6 +50,7 @@ class Edit:
     search: str           # "" for a new file
     replace: str
     new_file: bool = False
+    create_if_missing: bool = False   # "=== FILE:" followed by SEARCH/REPLACE: a new file, written as an edit
 
 
 @dataclass
@@ -58,7 +59,8 @@ class Parsed:
     run: list[str] = field(default_factory=list)        # actions asked for with RUN:
     needs_approval: list[str] = field(default_factory=list)
     disputes: list[str] = field(default_factory=list)    # review items the Builder says are wrong, with why
-    problems: list[str] = field(default_factory=list)   # blocks that couldn't be read
+    problems: list[str] = field(default_factory=list)   # blocks that couldn't be read: the try can't pass
+    notes: list[str] = field(default_factory=list)      # blocks dropped because they changed nothing new
 
 
 @dataclass
@@ -80,12 +82,12 @@ def _strip_fence(lines: list[str]) -> list[str]:
 def parse(reply: str) -> Parsed:
     out = Parsed()
     lines = reply.replace("\r\n", "\n").split("\n")
-    i, current = 0, None   # current = the path of the last === EDIT: header
+    i, current, from_file = 0, None, False   # current = the path of the last === EDIT: (or FILE:) header
     while i < len(lines):
         line = lines[i]
         m_edit, m_file = EDIT_HEAD.match(line), FILE_HEAD.match(line)
         if m_edit:
-            current = m_edit.group(1).strip().replace("\\", "/")
+            current, from_file = m_edit.group(1).strip().replace("\\", "/"), False
             i += 1
             continue
         if m_file:
@@ -94,6 +96,12 @@ def parse(reply: str) -> Parsed:
             j = i + 1
             while j < len(lines) and not lines[j].strip():
                 j += 1
+            if j < len(lines) and SEARCH.match(lines[j]):
+                # the model wrote a new file as SEARCH/REPLACE with made-up "old" lines (Day 6): what it meant is
+                # plain, so the REPLACE part becomes the file when it doesn't exist yet
+                current, from_file = path, True
+                i = j
+                continue
             if j >= len(lines) or not FENCE.match(lines[j]):
                 out.problems.append(f"=== FILE: {path} === has no ``` code block after it")
                 i += 1
@@ -125,7 +133,7 @@ def parse(reply: str) -> Parsed:
             else:
                 search = _strip_fence(lines[i + 1:j])
                 replace = _strip_fence(lines[j + 1:k])
-                out.edits.append(Edit(current, "\n".join(search), "\n".join(replace)))
+                out.edits.append(Edit(current, "\n".join(search), "\n".join(replace), create_if_missing=from_file))
             i = k + 1
             continue
         i += 1
@@ -142,9 +150,9 @@ def parse(reply: str) -> Parsed:
             kept.append(e)
     out.edits = kept
     if repeats:
-        out.problems.append(f"{repeats} repeated blocks were dropped (each change once is enough)")
+        out.notes.append(f"{repeats} repeated blocks were dropped (each change once is enough)")
     if noops:
-        out.problems.append(f"{noops} blocks changed nothing (REPLACE was the same as SEARCH) and were dropped")
+        out.notes.append(f"{noops} blocks changed nothing (REPLACE was the same as SEARCH) and were dropped")
     out.run = [a.lower() for a in RUN.findall(reply)]
     out.needs_approval = [n.strip() for n in NEEDS.findall(reply)]
     out.disputes = [d.strip() for d in DISPUTE.findall(reply)]
@@ -309,6 +317,10 @@ def apply(repo: Path, edits: list[Edit], protected: set[str] = frozenset()) -> l
                 _write(target, e.replace, nl, bom)
             else:
                 _write(target, e.replace, "\r\n" if _repo_uses_crlf(repo) else "\n", False)
+            out.append(Outcome(e, True))
+            continue
+        if not target.exists() and e.create_if_missing:
+            _write(target, e.replace.rstrip("\n") + "\n", "\r\n" if _repo_uses_crlf(repo) else "\n", False)
             out.append(Outcome(e, True))
             continue
         if not target.exists():

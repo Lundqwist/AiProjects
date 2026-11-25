@@ -41,6 +41,14 @@ Every job fails as given and passes with a reference solution.
 | `lua-01-junk-seller` | WoW addon (Lua 5.1, LuaJIT) | `luajit tests/run.lua`: empty-slot crash, saved keep list + slash command, money summary |
 | `lua-02-roll-tracker` | WoW addon (Lua 5.1, LuaJIT) | `luajit tests/run.lua`: accented names and realms, 1-100 only, first roll counts, sorting, winner |
 
+| `tizen-01-tv-remote` | Samsung TV web app (Chrome 69) | `node --test`: grid focus with the remote, Back closes or exits, red key + its registration and privilege |
+| `tizen-02-headline-ticker` | Samsung TV web app (Chrome 69) | `node --test`: wrap, filter, dedupe, sort, cap, "time ago" texts |
+| `android-01-wake-on-lan` | Android (Java, Gradle, JUnit 4) | `gradlew testDebugUnitTest`: MAC parsing, broadcast address, packet size |
+| `android-02-boot-switch` | Android (Java, Gradle, JUnit 4) | `gradlew testDebugUnitTest`: setting with migration, layout switch, strings, boot receiver in the manifest |
+
+The Tizen jobs load the app's scripts into a sandbox with stand-ins for `document` and `tizen` (`tests\load.js`). The
+Android jobs need JUnit 4.13.2 in Gradle's cache (downloaded once) and run `--offline` with Android Studio's JBR.
+
 The Lua jobs carry a small harness in `tests\` (`wow.lua` stands in for the game's API: frames, events, bags, chat,
 slash commands; `run.lua` runs every `tests\*_test.lua`).
 
@@ -68,6 +76,7 @@ tests, up to 3 tries per round; restores of the golden jobs' own packages are al
 `--pipeline team` runs the whole coding team (Scout, Builder, Checker with FIX rounds) and checks only when the
 team says it is done; use `--tries 1` for the end-to-end score. Day 4 (2026-11-25): todo API 3/3, cart 1/3.
 Day 5, all four jobs, 3 runs each: todo API 3/3, cart 2/3, roll tracker 2/3, junk seller 0/3 (7 of 12).
+Day 6, the four new jobs, 3 runs each: ticker 3/3, boot switch 2/3, Wake-on-LAN 0/3, TV remote 0/3 (5 of 12).
 
 ## Results
 
