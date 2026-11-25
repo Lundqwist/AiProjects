@@ -200,7 +200,8 @@ def plan(repo: Path, action: str, only: str | None = None, packs: dict | None = 
         spec = kind.get("actions", {}).get(action)
         if not spec or not all(_when(p, c) for c in spec.get("when", [])):
             continue
-        cmd = [part.replace("{file}", str(p.file)).replace("{dir}", str(p.dir)) for part in spec["cmd"]]
+        cmd = [part.replace("{file}", str(p.file)).replace("{dir}", str(p.dir)).replace("{packdir}", str(PACKS_DIR))
+               for part in spec["cmd"]]
         missing = next((m for m in (_missing(p, n) for n in spec.get("needs", [])) if m), None)
         steps.append(Step(action, p, cmd, p.dir, int(spec.get("timeout", 300)), bool(spec.get("ask")),
                           spec.get("why", ""), missing, {k: str(v) for k, v in spec.get("env", {}).items()}))

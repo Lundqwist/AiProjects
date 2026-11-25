@@ -1,0 +1,49 @@
+# Stack pack: lua (game mods; first: World of Warcraft addons, WoW: Forever interface 16001)
+#
+# How the Runner finds and checks an addon. See web.toml for the format. {packdir} = this folder.
+# Everything runs with LuaJIT 2.1, which is Lua 5.1 like the game. Nothing here is downloaded: the build check
+# is packs\lua\check.lua (syntax, Lua 5.2+ features, accidental globals), written for this pack.
+
+name = "lua"
+title = "Lua game mods (World of Warcraft addons)"
+
+[[kind]]
+name = "wow-addon"
+markers = ["*.toc"]
+
+  [kind.actions.build]
+  cmd = ["luajit", "{packdir}/lua/check.lua", "{file}"]
+  timeout = 120
+
+  [kind.actions.test]
+  # an addon's own headless tests: tests\run.lua loads the addon with stubs of the game's API and runs the tests
+  cmd = ["luajit", "tests/run.lua"]
+  when = ["file:tests/run.lua"]
+  timeout = 300
+
+# Asked on screen first, never run freely
+[ask_first]
+install_addon = "copies the addon into the game's AddOns folder (D:\\Blizzard\\World of Warcraft\\_forever_\\Interface\\AddOns)"
+add_library = "adds a library (Ace3, LibStub and the like) to the addon"
+
+# What the Builder and Checker are told about this stack
+[notes]
+text = """
+- Lua 5.1 only (the game's Lua): no goto or ::labels::, no // or bit operators (use math.floor and the bit
+  library: bit.band, bit.bor), no table.unpack or table.pack (use unpack() and select('#', ...)), no utf8 library.
+  Lua patterns, not regular expressions: %d not \\d, %s not \\s, - for a lazy match, %. for a dot.
+- Every file starts with `local ADDON_NAME, ns = ...`; share code between files through `ns`, never through globals.
+- Everything is local. The only globals: the .toc's SavedVariables, SLASH_NAME1 + SlashCmdList.NAME for slash
+  commands, BINDING_ names, and functions named after the addon that XML or key bindings must call.
+- SavedVariables are nil until ADDON_LOADED for this addon has fired: create the table there
+  (`MyAddonDB = MyAddonDB or {}`), never at file load.
+- Events: one frame, frame:RegisterEvent("NAME") per event, and ONE frame:SetScript("OnEvent", function(self,
+  event, ...) end) that handles every event with if/elseif. A second SetScript("OnEvent") on the same frame
+  replaces the first, and the first one's events are silently lost. To handle a new event, register it and add
+  a branch to the existing handler.
+- Print with DEFAULT_CHAT_FRAME:AddMessage (or print); colour codes are |cffRRGGBB...|r.
+- Only call API functions the addon already uses or that the step names: WoW: Forever is a Classic-era client,
+  and many retail functions don't exist there. Bag functions live in C_Container (GetContainerNumSlots,
+  GetContainerItemInfo returns a table or nil for an empty slot, UseContainerItem).
+- Keep the addon's style: two-space indentation, local function Name(), comments that say why.
+"""

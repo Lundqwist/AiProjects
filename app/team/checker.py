@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from team import edits, jobs, llm, runner
+from team import edits, jobs, llm, runner  # noqa: F401 (edits: tests and the client's files)
 from wb_settings import Settings
 
 PROMPT = (Path(__file__).resolve().parent / "prompts" / "checker.md").read_text(encoding="utf-8")
@@ -124,17 +124,37 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
     if all(r.ok for r in results):
         results += job.run("test", ask_fn=ask_fn)
     report = runner.report(results, "build and test") if results else "No project has a build or test action."
+    own_failing: list[str] = []
     if results and not all(r.ok for r in results):
-        v = Verdict("FIX", ["the build or tests fail when the Checker runs them"], checks=report, by="the checks")
-        job.log(f"Checker · round {round_no} · FIX (the checks fail)", report)
-        return v
+        from team import builder   # (builder doesn't import the checker)
+        received = set(job.client_files())
+        client_tests = edits.protected_tests(repo, sorted(received), builder.test_project_dirs(repo))
+        own_tests = {f for f in builder.repo_files(repo) if f not in received
+                     and edits.looks_like_test(f, builder.test_project_dirs(repo))}
+        c, own_failing = builder.failing_owners(repo, results, client_tests, own_tests)
+        builds_ok = all(r.ok for r in results if r.action == "build")
+        if not (builds_ok and own_failing and not c):
+            v = Verdict("FIX", ["the build or tests fail when the Checker runs them"], checks=report, by="the checks")
+            job.log(f"Checker · round {round_no} · FIX (the checks fail)", report)
+            return v
+        # only the Builder's own tests fail: the model decides which is wrong, the test or the code
     card = job.card()
+    stack = (card.stack or ", ".join(runner.detect(repo)) or "web").split(",")[0].strip()
+    notes = runner.pack_notes(stack)
     files = changed_files(repo, since)
     reqs = "\n".join(f"R{i}. {r}" for i, r in enumerate(requirements, 1)) or "(none listed: judge against the step)"
     user = (f"Job: {card.title}\n" + (f"Goal: {card.goal}\n" if card.goal else "") + f"\nStep:\n{step}\n\n"
-            f"Requirements:\n{reqs}\n\nYour own run of the build and tests:\n{report}\n\n"
+            f"Requirements:\n{reqs}\n\n"
+            + (f"Facts about this stack (judge the code by these):\n{notes}\n\n" if notes else "")
+            + f"Your own run of the build and tests:\n{report}\n\n"
             f"The step's diff:\n```diff\n{step_diff(repo, since) or '(no changes)'}\n```\n\n"
             f"The changed files as they are now (line numbers on the left):\n\n{files_text(repo, files)}")
+    if own_failing:
+        user += ("\n\nTests the Builder wrote itself fail: " + ", ".join(own_failing) + ". The client's tests pass. "
+                 "Work out for each failing test whether the TEST is wrong (it expects something the step doesn't "
+                 "ask for, or computes the expected value wrongly) or the CODE is wrong. Your FIX list must say which: "
+                 "'<test file>:<line> - the test is wrong - <what it must expect instead>' or a normal code item. "
+                 "The verdict can't be PASS while a test fails.")
     if last_fix:
         user += ("\n\nYour FIX list from the last round was:\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(last_fix, 1)))
     if disputes:
@@ -158,6 +178,11 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
             break
     if not v.verdict:
         v.verdict, v.question = "ASK", "The Checker's answer couldn't be read twice; look at the diff yourself."
+    if own_failing and v.verdict == "PASS":   # never a PASS with a failing test, whoever wrote it
+        v.verdict = "FIX"
+        v.fix_list = v.fix_list or [f"{f} fails: decide whether the test or the code is wrong against the "
+                                    "requirements, and correct that one" for f in own_failing]
+        v.reasons.append("tests the Builder wrote still fail")
     v.checks = report
     job.log(f"Checker · round {round_no} · {v.verdict}",
             "\n".join(v.reasons + [f"{i}. {f}" for i, f in enumerate(v.fix_list, 1)]

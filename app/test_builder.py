@@ -245,6 +245,25 @@ finally:
     wb_ai.ask = real_ask
 check("a runaway reply (40 blocks) applies nothing", r.status == "failed" and not r.tries[0].applied, r.message)
 
+# correct code, but its own new test expects the wrong thing: after one more try, the Checker decides
+jobs.git(job.repo, "checkout", "-q", "--", ".")
+jobs.git(job.repo, "clean", "-qfd")
+(job.repo / "src" / "sum.js").write_text("exports.sum = (a, b) => a - b;\n", encoding="utf-8")
+wrong_test = ("=== FILE: test/sum-wrong.test.js ===\n```js\nconst test = require('node:test');\nconst assert = "
+              "require('node:assert');\nconst { sum } = require('../src/sum');\n"
+              "test('wrong expectation', () => assert.strictEqual(sum(1, 1), 3));\n```\nRUN: test")
+fix_code = "=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\n(a, b) => a - b\n=======\n(a, b) => a + b\n>>>>>>> REPLACE\n"
+answers = [fix_code + wrong_test, "Both are right.\nRUN: test"]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Make sum add", s, max_tries=3)
+finally:
+    wb_ai.ask = real_ask
+check("only its own tests failing: after one more try the step goes to the Checker, committed",
+      r.ok and r.own_failing == ["test/sum-wrong.test.js"] and len(r.tries) == 2 and bool(r.commit),
+      f"{r.status} {r.own_failing} {len(r.tries)}")
+
 answers = ["NEEDS_APPROVAL: lodash for sums"]
 prompts.clear()
 wb_ai.ask = fake_ask

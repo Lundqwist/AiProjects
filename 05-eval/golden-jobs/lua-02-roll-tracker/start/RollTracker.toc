@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: RollTracker
+## Notes: Keeps track of /roll results for loot. /rolls
+## Author: A client
+## Version: 0.3.0
+
+RollTracker.lua

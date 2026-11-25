@@ -127,6 +127,29 @@ lines = ["building", "error during build:", "[transform] Unexpected token", "  â
 check("error lines keep the code frame after them",
       runner.error_lines(lines)[:4] == lines[1:5] and "unrelated" not in runner.error_lines(lines))
 
+# ---- the lua pack -------------------------------------------------------------------------------
+
+addon = TMP / "lua-repo" / "MyAddon"
+(addon / "tests").mkdir(parents=True)
+(addon / "MyAddon.toc").write_text("## Interface: 16001\n## SavedVariables: MyAddonDB\n\nCore.lua\n", encoding="utf-8")
+(addon / "Core.lua").write_text("local ADDON_NAME, ns = ...\nMyAddonDB = MyAddonDB or {}\nSLASH_MYADDON1 = '/my'\n",
+                                encoding="utf-8")
+lua_repo = addon.parent
+check("the lua pack finds an addon by its .toc", [p.rel(lua_repo) for p in runner.find_projects(lua_repo)]
+      == ["MyAddon/MyAddon.toc"] and runner.detect(lua_repo) == ["lua"])
+r = runner.run(lua_repo, "build")
+check("the lua build check passes a clean addon", len(r) == 1 and r[0].ok, runner.report(r, "build"))
+(addon / "Core.lua").write_text("local ADDON_NAME, ns = ...\ncount = 1\nfor i = 1, 2 do goto skip ::skip:: end\n",
+                                encoding="utf-8")
+r = runner.run(lua_repo, "build")[0]
+check("the lua build check reports a global and goto with their lines",
+      not r.ok and any("Core.lua:2: sets the global 'count'" in e for e in r.errors)
+      and any("Core.lua:3: goto" in e for e in r.errors), r.summary())
+check("no test action without tests/run.lua", runner.plan(lua_repo, "test") == [])
+(addon / "tests" / "run.lua").write_text("print('1 tests, 1 passed') os.exit(0)\n", encoding="utf-8")
+r = runner.run(lua_repo, "test")
+check("tests/run.lua is the test action", len(r) == 1 and r[0].ok, runner.report(r, "test"))
+
 # ---- job card -----------------------------------------------------------------------------------
 
 card = jobs.JobCard("Add booking page", "Acme", "web", "Customers can book a time",

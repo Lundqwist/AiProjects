@@ -167,6 +167,24 @@ finally:
 check("failing checks are FIX by the checks themselves, with the errors for the Builder",
       v.verdict == "FIX" and v.by == "the checks" and "FAILED" in v.fix_text(), v.fix_text())
 
+# only a test the Builder wrote fails: the model decides, and can't PASS
+(job.repo / "src" / "sum.js").write_text("exports.sum = (a = 0, b = 0) => a + b;\n", encoding="utf-8")
+(job.repo / "test" / "own.test.js").write_text(
+    "const test = require('node:test');\nconst assert = require('node:assert');\nconst { sum } = require('../src/sum');\n"
+    "test('own', () => assert.strictEqual(sum(1, 1), 3));\n", encoding="utf-8")
+jobs.git(job.repo, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+jobs.git(job.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "own test")
+seen: list[str] = []
+wb_ai.ask = lambda s_, m, **k: (seen.append(m[-1]["content"]),
+                                wb_ai.Answer("R1: DONE - fine\nVERDICT: PASS", "checker", "here"))[1]
+try:
+    v = checker.check(s, job, "x", ["sum adds"], jobs.git(job.repo, "rev-parse", "HEAD~1"))
+finally:
+    wb_ai.ask = real_ask
+check("only the Builder's own test fails: the model is asked which is wrong, and its PASS becomes FIX",
+      seen and "Tests the Builder wrote itself fail: test/own.test.js" in seen[0] and v.verdict == "FIX"
+      and "test/own.test.js fails" in v.fix_list[0], f"{v.verdict} {v.fix_list}")
+
 shutil.rmtree(TMP, ignore_errors=True)
 if failures:
     print("\n" + "\n".join(failures))

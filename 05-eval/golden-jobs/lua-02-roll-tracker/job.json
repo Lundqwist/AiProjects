@@ -1,0 +1,6 @@
+{
+  "name": "lua-02-roll-tracker",
+  "pack": "lua",
+  "check": ["luajit", "tests/run.lua"],
+  "timeout": 120
+}

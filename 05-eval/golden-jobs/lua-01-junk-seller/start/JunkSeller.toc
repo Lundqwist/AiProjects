@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: JunkSeller
+## Notes: Sells grey items when you open a merchant. /junk
+## Author: A client
+## Version: 1.0.0
+## SavedVariables: JunkSellerDB
+
+JunkSeller.lua

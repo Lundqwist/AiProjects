@@ -51,6 +51,7 @@ class BuildResult:
     commit: str = ""
     new_files: list[str] = field(default_factory=list)
     disputes: list[str] = field(default_factory=list)   # FIX items the Builder says are wrong
+    own_failing: list[str] = field(default_factory=list)  # its own test files that still fail (the Checker decides)
     changed_files: list[str] = field(default_factory=list)
 
     @property
@@ -281,6 +282,17 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         if rec.ok:
             result.status = "pass"
             break
+        # Day 1 lesson, seen again on Day 5: the Builder's own new test expects the wrong thing (1200 copper as
+        # "1s 20c"), and it bends correct code to fit, or never passes. After one try to sort it out itself, a
+        # step where everything builds and only its own tests fail goes to the Checker, which decides whether the
+        # test or the code is wrong.
+        if answered and results and not unfinished and not missed and n >= 2:
+            builds_ok = all(r.ok for r in results if r.action == "build")
+            c, o = failing_owners(repo, results, client_tests, own_tests)
+            if builds_ok and o and not c:
+                result.status, result.own_failing = "pass", o
+                job.log(f"Builder · try {n} · only its own tests fail: the Checker decides", ", ".join(o))
+                break
         feedback = _feedback(outcomes, parsed, results, repo, client_tests, own_tests)
         if unfinished:
             feedback += ("\n\nYour edits left work undone (placeholder lines). Write the real code instead:\n"
@@ -294,7 +306,10 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
     result.changed_files = sorted({ln.strip() for ln in changed.splitlines() if ln.strip()})
     if result.ok:
         result.message = (f"Step done on try {len(result.tries)}: it builds and the tests pass.\n"
-                          + result.tries[-1].checks)
+                          if not result.own_failing else
+                          f"Step built on try {len(result.tries)}; only tests the Builder wrote fail "
+                          f"({', '.join(result.own_failing)}): the Checker decides whether the test or the code is "
+                          "wrong.\n") + result.tries[-1].checks
         if commit and result.changed_files:
             jobs.git(repo, "add", "-A")
             jobs.git(repo, "-c", "user.name=AI Workbench Builder", "-c", "user.email=workbench@localhost",

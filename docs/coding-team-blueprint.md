@@ -471,6 +471,51 @@ What the runs showed (each found by reading the job folders):
 9. My first prompts used the golden jobs' own answers as examples ("a store with no Remove", "a free-shipping
    threshold is not a FREESHIP code"). Removed: examples come from other domains, so the scores mean something.
 
+## Day 5 results (2026-11-25)
+
+**The lua pack** (`app\team\packs\lua.toml` + `packs\lua\check.lua`), with nothing downloaded: LuaJIT 2.1 (Lua 5.1,
+as in the game) was already installed. luacheck was not, and would need a download and a C build, so
+`check.lua` does the part that matters for addons:
+
+- syntax as Lua 5.1 parses it;
+- Lua 5.2+ features LuaJIT accepts but WoW doesn't (`goto`, `::labels::`, `table.unpack`, `utf8`, `bit32` …);
+- accidental globals, read from the compiled bytecode (any global write that isn't a SavedVariable, a `SLASH_` or
+  `BINDING_` name, or named after the addon);
+- a second top-level `frame:SetScript("OnEvent")`, which silently replaces the first. The Builder did this in
+  3 of 3 JunkSeller runs; OnUpdate switched on and off, and frames inside functions, are left alone (your own
+  addons do both).
+
+Your three addons (FavoriteItems, QuestXPTracker, LunarJournal) pass it clean; a planted bad addon gives all 7
+problems with their lines. Tests: an addon's own `tests\run.lua` (headless, with stand-ins for the game API).
+
+**Two Lua golden jobs**, each with a harness (`tests\wow.lua`: frames, events, bags, chat, slash commands):
+`lua-01-junk-seller` (empty-slot crash, a saved keep list with a slash command, a money summary) and
+`lua-02-roll-tracker` (accented names and realms, 1-100 only, first roll counts, sorting with ties, winner).
+Both fail as given and pass with a reference solution.
+
+All four golden jobs, end to end, 3 runs each (last run):
+
+| Job | Passed | The others |
+|---|---|---|
+| web-01 todo API | 3/3 | - |
+| web-02 shop cart | 2/3 (was 1/3) | one false PASS |
+| lua-02 roll tracker | 2/3 | one honest stop (accented names still not recorded) |
+| lua-01 junk seller | 0/3 | three false PASSes, each missing 1-4 edge cases (`/junk keep` without a number, a trailing space after `10s`, keep parsing) |
+| **All** | **7/12** | |
+
+What the runs showed:
+
+1. **A real WoW gotcha** (two OnEvent scripts) is now caught by the build check and is in the pack notes.
+2. **The Builder's own wrong tests** (the Day 1 lesson again: a test expecting `1s 20c` for 12 silver) blocked
+   correct code. Now: when everything builds and only its own tests fail, after one more try the step goes to the
+   Checker, which says whether the test or the code is wrong. It can never PASS while a test fails.
+3. **The Checker didn't know the stack** (it called Lua patterns regex and misread `.-`): it gets the pack's
+   notes now.
+4. **One hidden check asked for more than the task said** (spaces in `/junk  keep  77 `): the task now says it.
+   A golden job's checks may only test what its task states.
+5. **The remaining failures are edge cases that a reading Checker misses** (`null` vs `undefined`, a bare
+   `/junk keep`, a trailing space). That is the next thing to fix (see START HERE).
+
 ## START HERE FIRST
 
 **Day 1 is done** (2026-11-25): context overflow and file parser fixed, Git for Windows installed, two web golden
@@ -524,9 +569,15 @@ jobs and the bake-off written, Builder model chosen (`qwen3-coder:30b`, see Day 
 - Job cards keep steps of several lines. `cli.py scout` and `cli.py team`; `bakeoff.py --pipeline team`.
 - Tests: `app\test_loop.py` (26 checks), `test_builder.py` (31), `test_team.py` (34), `test_wb_code.py` (9).
 
-**Before Day 5, decide:** more work on the cart job's reliability (ideas: the Checker runs a small probe per
-requirement instead of only reading; a second Checker opinion on PASS), or go on to the Lua pack and come back
-with more golden jobs. Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would
-unload the model the CLI is about to use).
+**Day 5 is done** (2026-11-25): the lua pack and 2 Lua golden jobs (see Day 5 results). Goal was 2 of 2 Lua jobs
+passing; got roll tracker 2/3, junk seller 0/3. All four jobs: 7 of 12 end to end.
+
+**Next, before Day 6: Checker probes.** Most remaining failures are edge cases the Checker reads past. Let it write
+a small test per requirement (with the job's own test harness: `tests\*_test.lua`, `test\*.test.js`, the xUnit
+project), run it through the Runner, and judge from the results; a probe that fails is handled like the
+Builder's own failing tests (the Checker says whether the probe or the code is wrong). Then Day 6 (Tizen + Android).
+
+Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would unload the model the
+CLI is about to use).
 
 Still wanted from you: one small real client task (no names needed) for Day 7.

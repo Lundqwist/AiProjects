@@ -38,6 +38,11 @@ Every job fails as given and passes with a reference solution.
 |---|---|---|
 | `web-01-todo-api` | ASP.NET Core 8 minimal API + xUnit | `dotnet test`: GET/DELETE by id with 404s, 400 on empty titles, trimmed titles |
 | `web-02-shop-cart` | Plain JavaScript modules | `node --test`: rounding bug + discount codes with edge cases |
+| `lua-01-junk-seller` | WoW addon (Lua 5.1, LuaJIT) | `luajit tests/run.lua`: empty-slot crash, saved keep list + slash command, money summary |
+| `lua-02-roll-tracker` | WoW addon (Lua 5.1, LuaJIT) | `luajit tests/run.lua`: accented names and realms, 1-100 only, first roll counts, sorting, winner |
+
+The Lua jobs carry a small harness in `tests\` (`wow.lua` stands in for the game's API: frames, events, bags, chat,
+slash commands; `run.lua` runs every `tests\*_test.lua`).
 
 ```powershell
 .\.venv\Scripts\python.exe 05-eval\golden-jobs\bakeoff.py --models qwen2.5-coder:7b qwen2.5-coder:14b
@@ -62,6 +67,7 @@ tests, up to 3 tries per round; restores of the golden jobs' own packages are al
 
 `--pipeline team` runs the whole coding team (Scout, Builder, Checker with FIX rounds) and checks only when the
 team says it is done; use `--tries 1` for the end-to-end score. Day 4 (2026-11-25): todo API 3/3, cart 1/3.
+Day 5, all four jobs, 3 runs each: todo API 3/3, cart 2/3, roll tracker 2/3, junk seller 0/3 (7 of 12).
 
 ## Results
 
