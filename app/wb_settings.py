@@ -55,8 +55,9 @@ class Settings:
     # the Checker writes and runs a small test per requirement (probes.py). Off: with qwen3:8b judging its own
     # probes it was worse (misused harness, unexplained failures, runaway answers) and six times slower (Day 5b)
     team_probes: bool = False
-    team_checker_model: str = "qwen3:8b"   # thinks first; deepseek-r1:8b gave empty answers, and the Builder's
-    #                                         own model shared its blind spots (Day 4 trial)
+    team_checker_model: str = "qwen3:8b"   # thinks first. Day 6: qwen3:30b caught more bugs judging finished code
+    #   alone (7 vs 2 of 11), but end to end it was no better (when the team said done: 55 % right vs 59 %) and took
+    #   twice as long; its wrong FIX items also broke correct code. deepseek-r1:8b gave empty answers.
 
     # Online AI for larger jobs, used while it has tokens. Keys stay in environment variables.
     online_mode: str = "big"          # off, big (larger jobs only), always

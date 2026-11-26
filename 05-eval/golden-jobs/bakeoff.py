@@ -215,8 +215,10 @@ def main() -> None:
     ap.add_argument("--pipeline", choices=("code", "builder", "team"), default="code",
                     help="code = the Code tab (whole files); builder = the coding team's Builder (edits + Runner); "
                          "team = Scout + Builder + Checker")
+    ap.add_argument("--checker", help="the team's Checker model (default: team_checker_model in Settings)")
+    ap.add_argument("--scout", help="the team's Scout model (default: team_scout_model in Settings)")
     args = ap.parse_args()
-    run_one = {"builder": run_job_builder, "team": run_job_team}.get(args.pipeline, run_job)
+    run_one ={"builder": run_job_builder, "team": run_job_team}.get(args.pipeline, run_job)
 
     jobs = sorted(p for p in HERE.iterdir() if (p / "job.json").exists() and (not args.jobs or p.name in args.jobs))
     run_dir = RUNS / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -225,6 +227,10 @@ def main() -> None:
     for model in args.models:
         s = Settings()
         s.code_model, s.online_mode = model, "off"
+        if args.checker:
+            s.team_checker_model = args.checker
+        if args.scout:
+            s.team_scout_model = args.scout
         for rep in range(1, args.repeat + 1):
             for job_dir in jobs:
                 print(f"[{datetime.now():%H:%M:%S}] {model} · {job_dir.name} · run {rep} …", flush=True)

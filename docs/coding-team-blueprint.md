@@ -585,6 +585,33 @@ What still fails is the same as on Day 5: plausible code with an edge-case bug t
 (Back swallowed by an early `if (state.open) return;`, a signed byte giving `-64.-88.-206.-1`, `+1` accepted as
 hex, a future time as "5 min ago"). The tooling now shows the failures clearly; the judging isn't good enough.
 
+## Day 6b: a stronger Checker, tried (2026-11-26)
+
+`qwen3:30b` (general thinking MoE, 18 GB, downloaded with your OK) as the Checker.
+
+**Judging finished code alone** (18 finished jobs from earlier runs, 11 with bugs, 7 correct; same code for both
+models): qwen3:30b 13 right (7 of 11 bugs caught, 1 false FIX), 1.5-4.5 minutes per check; qwen3:8b 9 right (2 of 11
+bugs caught, 0 false FIX), 10-40 seconds. One of the 30B's right calls was for the wrong reason.
+
+**End to end, all eight jobs, 3 runs each, with the 30B Checker: 12 of 24** (todo API 3/3, roll tracker 3/3,
+ticker 3/3, boot switch 1/3, junk seller 1/3, cart 1/3, Wake-on-LAN 0/3, TV remote 0/3), 142 minutes of model time.
+With the 8B Checker the latest runs of the same jobs were 13 of 24. When the team said "done": right 12 of 22 times
+(55 %) with the 30B, 13 of 22 (59 %) with the 8B.
+
+Why the better judge didn't help: a FIX only helps when the Builder's fix is right. The Builder often changes
+something else, and the Checker accepts round 2. And the 30B also gave wrong FIX items: on Wake-on-LAN it invented a
+requirement ("spaces must be refused", where the task says spaces around the text are ignored), and the Builder
+broke correct code to meet it.
+
+So the default Checker is `qwen3:8b` again (same result, twice as fast); `qwen3:30b` stays installed
+(`team_checker_model` in settings, or `bakeoff.py --checker qwen3:30b`). If you want the 18 GB back:
+`ollama rm qwen3:30b`.
+
+**Where the team stands:** about half of the golden jobs pass end to end, and when it says "done" it is right a
+little more than half the time. The review gate (you read `review.md` and the diff before anything leaves the PC) is
+not optional at this level. The failures that remain are edge-case bugs in plausible code, on every stack; better
+tooling no longer changes the number, a better Builder model or human review does.
+
 ## START HERE FIRST
 
 **Day 1 is done** (2026-11-25): context overflow and file parser fixed, Git for Windows installed, two web golden
@@ -648,11 +675,9 @@ times slower.
 passing. All eight golden jobs now exist (2 per pack). Latest runs per job: todo API 3/3, cart 1/3, roll tracker
 3/3, junk seller 1/3, ticker 3/3, boot switch 2/3, Wake-on-LAN 0/3, TV remote 0/3.
 
-**The bottleneck is the Checker** (qwen3:8b reading code): almost every failure is a false PASS on an edge case.
-Options before or alongside Day 7: a stronger local Checker (for example the general `qwen3:30b`, a thinking MoE
-model that is not the Builder's coder model; a download of about 19 GB, so it needs your OK), then probes again with
-it. Day 7 (the Lead in the chat window + one real task) can go ahead either way: the review gate means a false PASS
-reaches you, not the client.
+**A stronger Checker was tried (Day 6b) and didn't raise the end-to-end score** (12 of 24 vs 13 of 24); the default
+stays `qwen3:8b`. **Next: Day 7**, the Lead in the chat window and one real task. The review gate means a false
+PASS reaches you, not the client.
 
 Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would unload the model the
 CLI is about to use).
