@@ -98,7 +98,10 @@ def parse(reply: str, n_requirements: int) -> Verdict:
     m = VERDICT.search(text)
     v = Verdict(m.group(1).upper() if m else "", raw=reply)
     for rm in REQ_LINE.finditer(text):
-        v.requirements[int(rm.group(1))] = (rm.group(2).upper(), rm.group(3).strip())
+        n = int(rm.group(1))
+        if n_requirements and not 1 <= n <= n_requirements:
+            continue   # a requirement that doesn't exist (R5..R25 of four, Day 7): the model made it up
+        v.requirements[n] = (rm.group(2).upper(), rm.group(3).strip())
     after = text[text.lower().find("fix list"):] if "fix list" in text.lower() else ""
     if after:
         stop = re.search(r"^\s*\**\s*ASK\b", after, re.I | re.M)
@@ -128,7 +131,8 @@ def parse(reply: str, n_requirements: int) -> Verdict:
 
 def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since: str, *,
           ask_fn: runner.AskFn | None = None, round_no: int = 1, last_fix: list[str] | None = None,
-          disputes: list[str] | None = None, probe_state: dict | None = None) -> Verdict:
+          disputes: list[str] | None = None, probe_state: dict | None = None,
+          already_done: str = "", context_files: list[str] | None = None) -> Verdict:
     """`last_fix` = this Checker's FIX list from the last round; `disputes` = the items the Builder says were
     wrong, with its reasons. The Checker reads the code again for those and decides."""
     repo = job.repo.resolve()
@@ -154,13 +158,28 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
     stack = (card.stack or ", ".join(runner.detect(repo)) or "web").split(",")[0].strip()
     notes = runner.pack_notes(stack)
     files = changed_files(repo, since)
+    if not files:
+        # nothing changed (the Builder says the code already does it): judge the code it points at, and the
+        # Scout's files. Day 7: with an empty diff the Checker saw no code at all and said "missing" three rounds
+        # running, for roles Program.cs did create.
+        named = re.findall(r"([\w./\\-]+\.\w+)(?::\d+)?", already_done)
+        files = [f.replace("\\", "/") for f in named if (repo / f).exists()]
+        files += [f for f in (context_files or []) if f not in files and (repo / f).exists()]
     reqs = "\n".join(f"R{i}. {r}" for i, r in enumerate(requirements, 1)) or "(none listed: judge against the step)"
-    user = (f"Job: {card.title}\n" + (f"Goal: {card.goal}\n" if card.goal else "") + f"\nStep:\n{step}\n\n"
+    request = job.request()
+    user = (f"Job: {card.title}\n" + (f"Goal: {card.goal}\n" if card.goal else "")
+            + (f"\nFor reference only, the job's whole request (names and details come from it; the rest of it is "
+               f"OTHER steps, so don't ask for it here):\n{request}\n" if request else "")
+            + f"\nThe step you judge (only this):\n{step}\n\n"
             f"Requirements:\n{reqs}\n\n"
             + (f"Facts about this stack (judge the code by these):\n{notes}\n\n" if notes else "")
             + f"Your own run of the build and tests:\n{report}\n\n"
             f"The step's diff:\n```diff\n{step_diff(repo, since) or '(no changes)'}\n```\n\n"
-            f"The changed files as they are now (line numbers on the left):\n\n{files_text(repo, files)}")
+            + ("The step changed no code: the Builder says the code already does it"
+               + (f" ({already_done})" if already_done else "") + ". Judge the code as it is now.\n\n"
+               if not changed_files(repo, since) else "")
+            + f"The {'changed ' if changed_files(repo, since) else ''}files as they are now (line numbers on the "
+              f"left):\n\n{files_text(repo, files)}")
     probe = None
     probe_state = probe_state if probe_state is not None else {}
     if getattr(s, "team_probes", True) and requirements:

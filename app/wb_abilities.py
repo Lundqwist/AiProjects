@@ -101,6 +101,16 @@ GROUPS = {g.key: g for g in (
            "web app", "app", "project", "projects", "vs code", "visual studio", "html", "css", "javascript",
            "python", "c#", "react", "game", "bug", "function", "repository", "repo", "kod", "koda", "program",
            "programmera", "hemsida", "webbsida", "projekt", "spel", "skript")),
+    Group("jobs", ("new_coding_job", "update_coding_job", "start_coding_job", "coding_job_status", "list_coding_jobs"),
+          "For a client's coding task, use the coding team (fully on this PC): new_coding_job copies the client's "
+          "code into a job folder and has the Lead write a job card (ask for the client and where the code is, a "
+          "folder or git URL, if the user didn't say); show the user the card and its questions. update_coding_job "
+          "changes the card from their answers. start_coding_job runs it in the background, only when the user asks "
+          "to start (it asks on screen first); the result is posted in the conversation later. coding_job_status "
+          "and list_coding_jobs tell how jobs are going. The team never pushes, deploys or sends anything.",
+          ("client", "clients", "customer", "coding job", "coding jobs", "job card", "the job", "this job", "new job",
+           "start the job", "start job", "job status", "branch", "fix the bug", "pull request", "kund", "kunden",
+           "kunder", "uppdrag", "uppdraget", "jobbet", "nytt jobb", "starta jobbet")),
     Group("invoices", ("process_invoices", "invoice_summary"),
           "process_invoices reads the invoices waiting in the inbox into checked CSV rows; invoice_summary says "
           "what has been read and what needs review.",
@@ -136,6 +146,8 @@ ABILITIES = {a.key: a for a in (
             "create", "Movie"),
     Ability("stories", "Stories", "Short stories by the writing expert", ("stories",), "create", "Story"),
     Ability("code", "Code", "New projects, changes and explanations, opened in VS Code", ("code",), "code"),
+    Ability("team", "Coding team", "Client jobs: a job card from your words, then the Scout, Builder and Checker on "
+            "a branch of their own, all on this PC; asks on screen before it copies code or starts", ("jobs",)),
     Ability("research", "Web and research", "Web search, reading pages, your CV, and full cited reports",
             ("web", "research"), "research"),
     Ability("invoices", "Invoices", "Invoice PDFs and photos into checked CSV rows", ("invoices",), "invoices"),

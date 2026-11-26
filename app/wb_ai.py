@@ -360,6 +360,10 @@ def _local(s: Settings, key: str, messages: list[dict], on_text, temperature: fl
         extra["think"] = key == "reasoning"  # the reasoning expert thinks first; others answer at once
     client = ollama.Client(timeout=1800)  # big local jobs are slow, and that is fine
     opts = {"temperature": temperature, "num_ctx": context_size(messages, max_tokens), "num_predict": max_tokens}
+    if model.startswith("qwen3-coder"):
+        # the sampling its model card asks for: without it, it fell into repeating the same edit blocks until its
+        # answer ran out (71 blocks on Day 4, 13-29 per try on Day 7)
+        opts.update(top_p=0.8, top_k=20, repeat_penalty=1.05)
     with wb_trace.span("model", model, expert=EXPERTS[key].name, thinks=bool(extra.get("think")),
                        context=opts["num_ctx"]) as sp:
         if on_text is None:

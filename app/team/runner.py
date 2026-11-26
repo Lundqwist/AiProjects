@@ -158,19 +158,47 @@ def _when(p: Project, cond: str) -> bool:
     raise ValueError(f"unknown condition {cond!r}")
 
 
+def _stale(marker: Path, project_file: Path) -> bool:
+    """The restore's result is older than the project file: a package was added or changed since (Day 7: the
+    Builder added Swashbuckle after the first restore, and every later build failed on the missing types)."""
+    try:
+        return project_file.stat().st_mtime > marker.stat().st_mtime
+    except OSError:
+        return False
+
+
+def _mark_restored(p: Project) -> None:
+    """After a restore that worked, its result counts as fresh. A restore with nothing new to do doesn't rewrite
+    project.assets.json, so its time stayed older than a .csproj written again with the same packages, and the
+    Runner asked for a restore after every restore (Day 7)."""
+    markers = ([c.parent / "obj" / "project.assets.json" for c in _csprojs(p)] if p.kind == "dotnet"
+               else [p.dir / "node_modules" / ".package-lock.json"])
+    for m in markers:
+        if m.exists():
+            os.utime(m)
+
+
 def _missing(p: Project, need: str) -> str | None:
-    """None if the need is met, else what is missing."""
+    """None if the need is met, else what is missing (or out of date)."""
     what, _, arg = need.partition(":")
     if what == "file":
-        if p.file.suffix == ".sln" and arg.startswith("obj/"):
+        if arg == "obj/project.assets.json":   # .NET: restored, and not older than the .csproj
             gone = [c for c in _csprojs(p) if not (c.parent / arg).exists()]
-            return f"{arg} for {', '.join(c.name for c in gone)}" if gone else None
+            if gone:
+                return f"{arg} for {', '.join(c.name for c in gone)}"
+            old = [c for c in _csprojs(p) if _stale(c.parent / arg, c)]
+            return f"a new restore ({', '.join(c.name for c in old)} changed since the last one)" if old else None
         return None if (p.dir / arg).exists() else arg
     if what == "deps-installed":
         pj = _package_json(p.dir)
         if not (pj.get("dependencies") or pj.get("devDependencies")):
             return None
-        return None if (p.dir / "node_modules").is_dir() else "node_modules"
+        if not (p.dir / "node_modules").is_dir():
+            return "node_modules"
+        lock = p.dir / "node_modules" / ".package-lock.json"   # written by every npm install
+        if lock.exists() and _stale(lock, p.dir / "package.json"):
+            return "a new restore (package.json changed since the last npm install)"
+        return None
     raise ValueError(f"unknown need {need!r}")
 
 
@@ -322,6 +350,8 @@ def run_step(repo: Path, step: Step, ask_fn: AskFn | None = None) -> Result:
         raw, _ = proc.communicate()
         state, code = "timed out", None
     seconds = time.monotonic() - started
+    if step.action == "restore" and state == "ran" and code == 0:
+        _mark_restored(step.project)
     text = shorten_paths(ANSI.sub("", raw.decode("utf-8", errors="replace")).replace("\r\n", "\n"), repo)
     lines = [ln.rstrip() for ln in text.split("\n") if ln.strip() and not STACK.match(ln) and not NOISE.match(ln)]
     errors = error_lines(lines)

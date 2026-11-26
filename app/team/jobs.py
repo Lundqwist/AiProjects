@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -145,7 +146,17 @@ class Job:
         return JobCard.from_markdown(self.card_path.read_text(encoding="utf-8"))
 
     def save_card(self, card: JobCard) -> None:
-        self.card_path.write_text(card.to_markdown(), encoding="utf-8")
+        """Written to a temporary file and swapped in, so a reader never sees half a card."""
+        tmp = self.card_path.with_suffix(".md.tmp")
+        tmp.write_text(card.to_markdown(), encoding="utf-8")
+        for attempt in range(20):   # Windows refuses the swap while a reader has the card open: wait a moment
+            try:
+                tmp.replace(self.card_path)
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
 
     def log(self, title: str, body: str = "") -> None:
         entry = f"\n## {datetime.now():%Y-%m-%d %H:%M:%S} · {title}\n"
@@ -158,6 +169,14 @@ class Job:
         state = "OK" if r.ok else r.state if r.state != "ran" else f"failed (exit {r.exit_code})"
         self.log(f"{r.action} · {r.project} · {state} · {r.seconds:.0f} s",
                  "" if r.ok else f"$ {r.command}\n" + "\n".join(r.output.splitlines()[-40:]))
+
+    def request(self, limit: int = 6000) -> str:
+        """The request the job was planned from (request.md), so the team can read the details the steps leave out."""
+        f = self.folder / "request.md"
+        if not f.exists():
+            return ""
+        text = f.read_text(encoding="utf-8").strip()
+        return text if len(text) <= limit else text[:limit] + "\n…(cut here)"
 
     def base_commit(self) -> str:
         """The commit the job started from: the client's code before the team changed anything."""
@@ -216,7 +235,8 @@ def create(jobs_root: Path, client: str, title: str, source: str) -> Job:
             git(job.repo, "-c", "user.name=AI Workbench", "-c", "user.email=workbench@localhost",
                 "commit", "--quiet", "-m", "The client's code as received")
             how = f"copied {src} (not a git repository: a new one was made here)"
-        git(job.repo, "switch", "--quiet", "-c", job.branch)
+        # -C: a clone can bring a branch of the same name (the source was on it); the job's branch starts here
+        git(job.repo, "switch", "--quiet", "-C", job.branch)
         # build output never goes into the team's commits, whatever the client's .gitignore says;
         # .git\info\exclude is local to this clone, so the client's files stay as they are
         exclude = job.repo / ".git" / "info" / "exclude"

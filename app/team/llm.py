@@ -16,6 +16,7 @@ ROLES = {  # role: (wb_ai expert key whose model is replaced, settings field wit
     "builder": ("code", "code_model"),
     "scout": ("reasoning", "team_scout_model"),       # thinks first when its model can (qwen3, deepseek-r1)
     "checker": ("reasoning", "team_checker_model"),   # the reasoning expert thinks before it answers
+    "lead": ("reasoning", "team_lead_model"),
 }
 
 

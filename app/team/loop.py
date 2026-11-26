@@ -48,7 +48,31 @@ def _head(job: jobs.Job) -> str:
 
 
 def run_step(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | None = None,
-             on_event: Event | None = None, fix_rounds: int = FIX_ROUNDS, extra_fix: str = "") -> StepOutcome:
+             on_event: Event | None = None, fix_rounds: int = FIX_ROUNDS, extra_fix: str = "",
+             max_tries: int = builder.MAX_TRIES, attempts: int = 1) -> StepOutcome:
+    """One step; `attempts` > 1 starts a failed step over (its unfinished work undone, the steps before it kept).
+    The same step passed in one run and failed in the next (Day 7): a fresh attempt is often enough."""
+    on_event = on_event or (lambda t, d: None)
+    since = _head(job)
+    out = None
+    for attempt in range(1, attempts + 1):
+        out = _run_step_once(s, job, step, ask_fn=ask_fn, on_event=on_event, fix_rounds=fix_rounds,
+                             extra_fix=extra_fix, max_tries=max_tries)
+        if out.ok or out.status == "ask" or attempt == attempts:
+            break
+        # back to where the step started: only inside the job's own repository (the team's copy)
+        jobs.git(job.repo, "reset", "--quiet", "--hard", since)
+        jobs.git(job.repo, "clean", "--quiet", "-fd")
+        job.log(f"Step attempt {attempt} of {attempts} didn't pass: starting the step again", out.message[:1500])
+        on_event(f"Attempt {attempt + 1} of {attempts}", "starting the step again from where it began")
+    if out and attempts > 1:
+        out.message = (f"(attempt {attempt} of {attempts}) " + out.message) if not out.ok else out.message
+    return out
+
+
+def _run_step_once(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | None = None,
+                   on_event: Event | None = None, fix_rounds: int = FIX_ROUNDS, extra_fix: str = "",
+                   max_tries: int = builder.MAX_TRIES) -> StepOutcome:
     on_event = on_event or (lambda t, d: None)
     repo = job.repo.resolve()
     card = job.card()
@@ -59,7 +83,7 @@ def run_step(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | No
 
     on_event("Scout", f"reading the repository with {llm.model_for(s, 'scout')}")
     pack = scout.scout(s, repo, step, files, protected, title=card.title, goal=card.goal, stack=stack,
-                       stack_notes=runner.pack_notes(stack))
+                       stack_notes=runner.pack_notes(stack), request=job.request())
     job.log("Scout · " + ("context pack" if pack.ok else "no usable pack (the Builder sees every file)"),
             pack.for_prompt() + (f"\n\nfiles: {', '.join(pack.files)}" if pack.files else "")
             + (f"\n\nproblems: {'; '.join(pack.problems)}" if pack.problems else ""))
@@ -69,6 +93,7 @@ def run_step(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | No
     out = StepOutcome(step, "failed", pack=pack)
 
     b = builder.build_step(job, step, s, ask_fn=ask_fn, on_event=on_event, pack=pack, fix_list=extra_fix,
+                           max_tries=max_tries,
                            commit_message=f"Builder: {step.splitlines()[0][:72]}")
     out.builds.append(b)
     if not b.ok:
@@ -81,7 +106,8 @@ def run_step(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | No
         last = out.verdicts[-1] if out.verdicts else None
         v = checker.check(s, job, step, pack.requirements, since, ask_fn=ask_fn, round_no=rnd,
                           last_fix=last.fix_list if last else None, disputes=out.builds[-1].disputes or None,
-                          probe_state=probe_state)
+                          probe_state=probe_state, already_done=out.builds[-1].already_done,
+                          context_files=pack.files)
         out.verdicts.append(v)
         if v.verdict == "PASS":
             out.status, out.message = "pass", f"PASS after {rnd} Checker round(s)."
@@ -96,6 +122,7 @@ def run_step(s: Settings, job: jobs.Job, step: str, *, ask_fn: runner.AskFn | No
             return out
         on_event("Builder", f"FIX round {rnd}: {len(v.fix_list)} item(s)")
         b = builder.build_step(job, step, s, ask_fn=ask_fn, on_event=on_event, pack=pack, fix_list=v.fix_text(),
+                               max_tries=max_tries,
                                allow_disputes=rnd == 1,
                                commit_message=f"Builder: fix round {rnd} for {step.splitlines()[0][:50]}")
         out.builds.append(b)
@@ -144,7 +171,8 @@ def write_review(job: jobs.Job, outcome: JobOutcome) -> str:
 
 
 def run_job(s: Settings, job: jobs.Job, *, ask_fn: runner.AskFn | None = None, on_event: Event | None = None,
-            open_review: Callable[[jobs.Job], None] | None = None) -> JobOutcome:
+            open_review: Callable[[jobs.Job], None] | None = None, max_tries: int = builder.MAX_TRIES,
+            attempts: int = 1) -> JobOutcome:
     """Run every step of the job card that isn't passed yet, between the Start and Review gates."""
     on_event = on_event or (lambda t, d: None)
     card = job.card()
@@ -161,7 +189,7 @@ def run_job(s: Settings, job: jobs.Job, *, ask_fn: runner.AskFn | None = None, o
         st.status = "building"
         job.save_card(card)
         text = st.text + (f"\nCheck: {st.check}" if st.check else "")
-        r = run_step(s, job, text, ask_fn=ask_fn, on_event=on_event)
+        r = run_step(s, job, text, ask_fn=ask_fn, on_event=on_event, max_tries=max_tries, attempts=attempts)
         outcome.steps.append(r)
         st.status = {"pass": "pass", "ask": "ask", "fix": "fix"}.get(r.status, "failed")
         if r.question:

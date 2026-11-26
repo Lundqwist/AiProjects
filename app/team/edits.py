@@ -36,6 +36,7 @@ FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 RUN = re.compile(r"^\s*RUN\s*:\s*(\w+)\s*$", re.I | re.M)
 NEEDS = re.compile(r"^\s*NEEDS_APPROVAL\s*:\s*(.+)$", re.I | re.M)
 DISPUTE = re.compile(r"^\s*\**DISPUTE\**\s*:\s*(.+)$", re.I | re.M)
+ALREADY = re.compile(r"^\s*\**ALREADY_DONE\**\s*:\s*(.+)$", re.I | re.M)
 
 SECRET_FILES = (".env", ".env.*", "*.pem", "*.key", "*.pfx", "*.p12", "*.snk", "id_rsa*", "id_ed25519*",
                 "secrets.json", "*.keystore", "*.jks", "credentials*", "*.author.p12")
@@ -59,6 +60,7 @@ class Parsed:
     run: list[str] = field(default_factory=list)        # actions asked for with RUN:
     needs_approval: list[str] = field(default_factory=list)
     disputes: list[str] = field(default_factory=list)    # review items the Builder says are wrong, with why
+    already_done: str = ""                                 # the Builder says the code already does the step
     problems: list[str] = field(default_factory=list)   # blocks that couldn't be read: the try can't pass
     notes: list[str] = field(default_factory=list)      # blocks dropped because they changed nothing new
 
@@ -156,6 +158,8 @@ def parse(reply: str) -> Parsed:
     out.run = [a.lower() for a in RUN.findall(reply)]
     out.needs_approval = [n.strip() for n in NEEDS.findall(reply)]
     out.disputes = [d.strip() for d in DISPUTE.findall(reply)]
+    m = ALREADY.search(reply)
+    out.already_done = m.group(1).strip() if m and not out.edits else ""
     return out
 
 
@@ -275,9 +279,12 @@ def nearest(text: str, search: str, context: int = 3) -> str:
     return "\n".join(f"{n + 1:>4}| {lines[n]}" for n in range(a, b))
 
 
-def apply(repo: Path, edits: list[Edit], protected: set[str] = frozenset()) -> list[Outcome]:
+def apply(repo: Path, edits: list[Edit], protected: set[str] = frozenset(),
+          received: set[str] | None = None) -> list[Outcome]:
     """Apply the edits in order. Each one either applies whole or is refused with a reason; the
-    others still apply. Line ends, BOM and encoding of each file are kept."""
+    others still apply. Line ends, BOM and encoding of each file are kept.
+    `received`: the files of the client's code as received. A long file may only be rewritten whole when it isn't one
+    of them (the team's own new file); the client's long files are changed with edits only. None = all files count."""
     repo = Path(repo).resolve()
     out: list[Outcome] = []
     for e in edits:
@@ -310,7 +317,8 @@ def apply(repo: Path, edits: list[Edit], protected: set[str] = frozenset()) -> l
                 except UnicodeDecodeError:
                     refuse("the file exists and isn't text")
                     continue
-                if len(old.split("\n")) > 60:
+                theirs = received is None or rel in received
+                if len(old.split("\n")) > 60 and theirs:   # Day 7: rewriting its own 86-line test was refused
                     refuse(f"{rel} already exists ({len(old.splitlines())} lines): change it with === EDIT: "
                            "blocks, not a whole new file")
                     continue
@@ -324,7 +332,15 @@ def apply(repo: Path, edits: list[Edit], protected: set[str] = frozenset()) -> l
             out.append(Outcome(e, True))
             continue
         if not target.exists():
-            refuse(f"{rel} doesn't exist: to create it, write it whole with === FILE: {rel} ===")
+            same = _repo_files_named(repo, target.name)
+            if same:   # a file of that name elsewhere: more likely a wrong path than a new file
+                refuse(f"{rel} doesn't exist; did you mean {same[0]}? To create a new file, write it whole with "
+                       f"=== FILE: {rel} ===")
+                continue
+            # an edit to a file that isn't there yet means "create it" (Day 7: a new project's first try wrote every
+            # new file as an edit): the REPLACE part becomes the file
+            _write(target, e.replace.rstrip("\n") + "\n", "\r\n" if _repo_uses_crlf(repo) else "\n", False)
+            out.append(Outcome(e, True, "created (the file didn't exist)"))
             continue
         try:
             text, nl, bom = _read(target)
@@ -350,6 +366,12 @@ def apply(repo: Path, edits: list[Edit], protected: set[str] = frozenset()) -> l
         _write(target, text[:a] + replace + text[b:], nl, bom)
         out.append(Outcome(e, True))
     return out
+
+
+def _repo_files_named(repo: Path, name: str) -> list[str]:
+    from team.runner import _walk
+    return [(here / f).relative_to(repo).as_posix() for here, files in _walk(repo) for f in files
+            if f.lower() == name.lower()]
 
 
 def _repo_uses_crlf(repo: Path) -> bool:

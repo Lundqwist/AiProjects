@@ -215,10 +215,14 @@ def parse(reply: str, files: list[str]) -> ContextPack:
 
 
 def scout(s: Settings, repo: Path, step: str, files: list[str], protected: set[str], *, title: str = "",
-          goal: str = "", stack: str = "web", stack_notes: str = "") -> ContextPack:
-    """Ask the Scout model; tries once more if its answer can't be read."""
+          goal: str = "", stack: str = "web", stack_notes: str = "", request: str = "") -> ContextPack:
+    """Ask the Scout model; tries once more if its answer can't be read. `request`: the job's own request, where
+    the step's names and details come from."""
     system = PROMPT.replace("{stack}", stack).replace("{stack_notes}", stack_notes or "(none)")
-    user = (f"Job: {title}\n" + (f"Goal: {goal}\n" if goal else "") + f"\nStep:\n{step}\n\n"
+    user = (f"Job: {title}\n" + (f"Goal: {goal}\n" if goal else "")
+            + (f"\nFor reference only, the job's whole request (take names, numbers and details from it; the rest "
+               f"of it is OTHER steps, so list requirements only for the step below):\n{request}\n" if request else "")
+            + f"\nThe step (only this):\n{step}\n\n"
             f"Repository map (every file, with its classes, functions and endpoints by line number):\n\n"
             f"{repo_map(repo, files, protected)}")
     pack = ContextPack()

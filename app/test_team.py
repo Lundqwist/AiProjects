@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -69,13 +70,27 @@ check("a .sln without restored packages needs a restore",
       bool(build["api/Api.sln"].missing) and "Api.csproj" in build["api/Api.sln"].missing, str(build["api/Api.sln"].missing))
 check("a node project with dependencies but no node_modules needs a restore", build["app/package.json"].missing == "node_modules")
 check("a node project without dependencies needs nothing", build["web/package.json"].missing is None)
+api = repo / "api" / "Api"
+(api / "obj").mkdir()
+(api / "obj" / "project.assets.json").write_text("{}", encoding="utf-8")
+(repo / "api" / "Api.Tests" / "obj").mkdir()
+(repo / "api" / "Api.Tests" / "obj" / "project.assets.json").write_text("{}", encoding="utf-8")
+time.sleep(0.05)
+(api / "Api.csproj").write_text("<Project Sdk=\"Microsoft.NET.Sdk.Web\"><ItemGroup><PackageReference Include=\"X\" "
+                                "Version=\"1.0.0\" /></ItemGroup></Project>", encoding="utf-8")
+stale = {s.project.rel(repo): s for s in runner.plan(repo, "build")}["api/Api.sln"].missing
+check("a .csproj changed after its restore needs a new restore", stale and "Api.csproj changed" in stale, str(stale))
+runner._mark_restored(runner.find_projects(repo)[[p.rel(repo) for p in runner.find_projects(repo)].index("api/Api.sln")])
+check("... and doesn't once restored again, even when the restore had nothing new to write",
+      {s.project.rel(repo): s for s in runner.plan(repo, "build")}["api/Api.sln"].missing is None)
 
 tests = {s.project.rel(repo) for s in runner.plan(repo, "test")}
 check("test only where there is a real test (npm's default and non-test projects left out)",
       tests == {"web/package.json", "api/Api.sln"}, str(tests))
 restore = {s.project.rel(repo): s for s in runner.plan(repo, "restore")}
 check("restore asks first", all(s.ask for s in restore.values()) and "app/package.json" in restore, str(restore))
-check("npm restore only where there is a lockfile", "web/package.json" not in restore)
+check("npm restore is npm install, with or without a lockfile (a new project has none)",
+      "web/package.json" in restore and restore["web/package.json"].command[:2] == ["npm", "install"])
 try:
     runner.plan(repo, "deploy")
     check("an unknown action is refused", False)
@@ -102,7 +117,7 @@ check("a missing restore stops the step before it runs", r.state == "needs resto
 asked: list[str] = []
 r = runner.run(repo, "restore", only="app/package.json",
                ask_fn=lambda t, text, b: (asked.append(text), b[-1])[1])[0]
-check("an ask-first action is asked and refused on no", r.state == "refused" and asked and "npm ci" in asked[0],
+check("an ask-first action is asked and refused on no", r.state == "refused" and asked and "npm install" in asked[0],
       r.summary())
 r = runner.run(repo, "restore", only="app/package.json")[0]
 check("an ask-first action with no one to ask is refused", r.state == "refused")
@@ -192,6 +207,35 @@ check("android tests run offline, with every failed test printed",
       "--offline" in t.command and any(c.endswith("android/test-logging.gradle") for c in t.command), str(t.command))
 check("android restore asks first, and is the only action without --offline",
       all(s.ask and "--offline" not in s.command for s in runner.plan(droid, "restore")))
+
+# ---- templates ----------------------------------------------------------------------------------
+
+from team import scaffold  # noqa: E402
+
+new = TMP / "new-project"
+new.mkdir()
+written = scaffold.make("web/dotnet-react", new, "Shop")
+check("the dotnet-react template makes the API, the tests and the client, named after the project",
+      {"src/Shop.Api/Shop.Api.csproj", "tests/Shop.Tests/Shop.Tests.csproj", "client/package.json",
+       "client/index.html"} <= set(written) and "namespace Shop.Api.Controllers;"
+      in (new / "src" / "Shop.Api" / "Controllers" / "HealthController.cs").read_text(encoding="utf-8"), str(written))
+ref = (new / "tests" / "Shop.Tests" / "Shop.Tests.csproj").read_text(encoding="utf-8")
+port = re.search(r"localhost:(\d+)'", (new / "client" / "vite.config.js").read_text(encoding="utf-8"))
+check("the test project references the API by the right path; the client's proxy has the API's port",
+      '..\\..\\src\\Shop.Api\\Shop.Api.csproj' in ref and port is not None and f"http://localhost:{port.group(1)}"
+      in (new / "src" / "Shop.Api" / "Properties" / "launchSettings.json").read_text(encoding="utf-8"))
+check("the Runner finds the three projects", sorted(p.rel(new) for p in runner.find_projects(new))
+      == ["client/package.json", "src/Shop.Api/Shop.Api.csproj", "tests/Shop.Tests/Shop.Tests.csproj"])
+try:
+    scaffold.make("web/dotnet-react", new, "Shop")
+    check("a template never overwrites a file", False)
+except FileExistsError:
+    check("a template never overwrites a file", True)
+try:
+    scaffold.make("web/dotnet-react", TMP / "x", "bad name!")
+    check("a name that can't be a project name is refused", False)
+except ValueError:
+    check("a name that can't be a project name is refused", True)
 
 # ---- job card -----------------------------------------------------------------------------------
 

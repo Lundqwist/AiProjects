@@ -33,6 +33,7 @@ import wb_notify
 import wb_spotify
 import wb_spotify_tools
 import wb_task_tools
+import wb_team_tools
 import wb_trace
 import wb_tv_tools
 import wb_wake
@@ -456,11 +457,13 @@ class ChatTab(QWidget):
         wb_code.configure(self.s)
         wb_brain.configure(self.s)
         wb_task_tools.configure(self.s)
+        wb_team_tools.configure(self.s)
         for module in (wb_access, wb_web_tools, wb_ai, wb_create, wb_code, wb_brain, wb_task_tools,
-                       wb_tv_tools, wb_spotify_tools):
+                       wb_tv_tools, wb_spotify_tools, wb_team_tools):
             voice.TOOLS.update(module.TOOLS)
         voice.STEP_NAMES.update(wb_brain.STEP_NAMES)
         voice.STEP_NAMES.update(wb_task_tools.STEP_NAMES)
+        voice.STEP_NAMES.update(wb_team_tools.STEP_NAMES)
 
     def on_groups(self) -> list[str]:
         """The tool groups of the abilities that are switched on and can work now."""

@@ -612,6 +612,43 @@ little more than half the time. The review gate (you read `review.md` and the di
 not optional at this level. The failures that remain are edge-case bugs in plausible code, on every stack; better
 tooling no longer changes the number, a better Builder model or human review does.
 
+## Day 7: the Lead in the conversation (2026-11-26)
+
+**Built:**
+
+- `app\team\lead.py` + `prompts\lead.md`: your request plus a short look at the repository (stack packs, projects,
+  files, the README) → the job card. The program holds it to what it can check: the Runner's stack pack, your
+  client name, at most 8 steps, a check on every step. `revise` changes a card from what you say next; steps already
+  done stay done. Model: `qwen3:30b` (`team_lead_model`), once per job: the 8B split a one-line fix into three steps
+  every time and copied the prompt's example check (`GET /api/items … 3 items`) into the card.
+- `app\wb_team_tools.py`: the **Coding team** ability (on by default; Abilities list). Tools: `new_coding_job`
+  (copies the code into a job folder: asks on screen first), `update_coding_job`, `start_coding_job` (runs in the
+  background, one job at a time; the Start gate asks on screen; `wb_create.make_room()` first), `coding_job_status`,
+  `list_coding_jobs`. The end is posted into the conversation (`wb_notify`) with the path to `review.md`; the Review
+  gate asks before opening VS Code.
+- `app\test_lead.py`: 16 checks with fake models (no copy without a click, a card from the Lead, revise keeps done
+  steps, the job runs in the background, one at a time, is announced, no start without a click). The app's own
+  self-test: 80/80.
+
+**Rehearsal** (the conversation's own model, `qwen3:8b`, two typed messages, on a throwaway copy of the cart code
+for "Nordic Bikes"): "New job … every amount the cart returns must be rounded to 2 decimals" → the assistant called
+`new_coding_job`, showed the one-step card; "Looks good, start the job" → `start_coding_job` → Scout, Builder,
+Checker PASS → posted back with the review file. The change is right (0.1 + 0.2 → subtotal 0.3, total 49.3).
+
+**Fixed on the way** (three rehearsals): the Builder looped in edit blocks when an earlier step had already done
+the work (it can now answer `ALREADY_DONE: file:line`, and the Checker judges that); `qwen3-coder` gets its model
+card's sampling (`top_p` 0.8, `top_k` 20, `repeat_penalty` 1.05: the runaway replies are gone); the Checker's made-up
+requirement numbers (R5…R25 of four) are ignored; the Scout may add no requirement the step doesn't state; reading a
+card while the running job rewrites it could see it empty (saved atomically now, and the running-job check comes
+first); the chat now shows the card instead of a summary.
+
+**After these changes, all eight golden jobs, 2 runs each: 9 of 16** (todo API 2/2, roll tracker 2/2, ticker 2/2,
+junk seller 1/2, cart 1/2, boot switch 1/2, Wake-on-LAN 0/2, TV remote 0/2) in 28 minutes of model time (the same
+pass rate as before, two to five times faster: no more runaway replies).
+
+**Not done yet: the real task.** Day 7's "done when" is one real client task delivered as a reviewed branch. That
+needs a task from you; the team is ready for it.
+
 ## START HERE FIRST
 
 **Day 1 is done** (2026-11-25): context overflow and file parser fixed, Git for Windows installed, two web golden
@@ -676,8 +713,12 @@ passing. All eight golden jobs now exist (2 per pack). Latest runs per job: todo
 3/3, junk seller 1/3, ticker 3/3, boot switch 2/3, Wake-on-LAN 0/3, TV remote 0/3.
 
 **A stronger Checker was tried (Day 6b) and didn't raise the end-to-end score** (12 of 24 vs 13 of 24); the default
-stays `qwen3:8b`. **Next: Day 7**, the Lead in the chat window and one real task. The review gate means a false
-PASS reaches you, not the client.
+stays `qwen3:8b`.
+
+**Day 7 is built** (2026-11-26; see Day 7): in the conversation, "New job for <client>: <what they want>, the code
+is in <folder or git URL>" → a job card → "start the job" → the team runs in the background → the result and
+`review.md` are posted back. Left: **one real client task**, reviewed by you, and counting the number (jobs finished
+without calling Claude, per week). The review gate means a false PASS reaches you, not the client.
 
 Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would unload the model the
 CLI is about to use).

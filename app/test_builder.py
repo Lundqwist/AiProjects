@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wb_ai  # noqa: E402
-from team import builder, edits, jobs  # noqa: E402
+from team import builder, edits, jobs, runner  # noqa: E402
 from wb_settings import Settings  # noqa: E402
 
 failures: list[str] = []
@@ -95,6 +95,8 @@ check("... and creates the file from REPLACE when it doesn't exist",
       edits.report(out))
 check("NEEDS_APPROVAL is read", edits.parse("NEEDS_APPROVAL: dayjs for date maths").needs_approval
       == ["dayjs for date maths"])
+check("ALREADY_DONE next to edits is ignored (the edits are the answer)",
+      edits.parse("=== EDIT: a.js ===\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\nALREADY_DONE: a.js:1").already_done == "")
 
 # ---- applying -----------------------------------------------------------------------------------
 
@@ -136,8 +138,15 @@ check("a new test file is fine; a whole-file rewrite of an existing file is too,
 (repo / "src" / "big.js").write_text("\n".join(f"line{i}" for i in range(100)), encoding="utf-8")
 out = edits.apply(repo, [E("src/big.js", "", "gone", True)])
 check("a whole-file rewrite of a big existing file is refused", not out[0].ok and "EDIT" in out[0].why)
-out = edits.apply(repo, [E("src/missing.js", "a", "b")])
-check("an edit to a file that doesn't exist says how to create it", not out[0].ok and "=== FILE:" in out[0].why)
+out = edits.apply(repo, [E("src/big.js", "", "rewritten\n", True)], received={"src/A.cs"})
+check("... unless the team made that file itself (not in the code as received)",
+      out[0].ok and (repo / "src" / "big.js").read_text(encoding="utf-8") == "rewritten\n", out[0].why)
+out = edits.apply(repo, [E("src/missing.js", "made-up old lines", "export const m = 1;")])
+check("an edit to a file that doesn't exist creates it from REPLACE",
+      out[0].ok and (repo / "src" / "missing.js").read_text(encoding="utf-8").strip() == "export const m = 1;", out[0].why)
+out = edits.apply(repo, [E("lib/b.js", "let x = 1;", "let y = 1;")])
+check("... unless a file of that name is elsewhere: then it asks whether that was meant",
+      not out[0].ok and "did you mean src/b.js" in out[0].why and not (repo / "lib" / "b.js").exists(), out[0].why)
 
 O = edits.Outcome
 found = edits.placeholders([
@@ -150,6 +159,20 @@ found = edits.placeholders([
 check("placeholders in new lines are found; HTML placeholder=, old TODOs and refused edits are not",
       found == ["a.cs: // In a real app, we'd remove it from the store", "d.cs: throw new NotImplementedException();"],
       str(found))
+
+cs = TMP / "cs"
+(cs / "Models").mkdir(parents=True)
+(cs / "Models" / "AppUser.cs").write_text("namespace Shop.Models;\npublic class AppUser { }\n", encoding="utf-8")
+res = runner.Result("build", "Shop.csproj", "dotnet build", False, 1, 1.0,
+                    "Auth\\AuthController.cs(11,40): error CS0246: The type or namespace name 'AppUser' could not be "
+                    "found (are you missing a using directive or an assembly reference?)\n"
+                    "Auth\\AuthController.cs(3,7): error CS0246: The type or namespace name 'IdentityUser' could not be found")
+hints = builder.compiler_hints(cs, [res])
+check("a C# type the compiler can't find, but the repository has, gets its using line; known library types too",
+      hints == ["AppUser is defined in Models/AppUser.cs in namespace Shop.Models: add `using Shop.Models;` at the top "
+                "of Auth/AuthController.cs.",
+                "IdentityUser comes from Microsoft.AspNetCore.Identity: add `using Microsoft.AspNetCore.Identity;` at the "
+                "top of Auth/AuthController.cs."], str(hints))
 
 # ---- the try loop, with a fake model ------------------------------------------------------------
 
@@ -273,6 +296,127 @@ finally:
 check("only its own tests failing: after one more try the step goes to the Checker, committed",
       r.ok and r.own_failing == ["test/sum-wrong.test.js"] and len(r.tries) == 2 and bool(r.commit),
       f"{r.status} {r.own_failing} {len(r.tries)}")
+
+# the step is already true: ALREADY_DONE, nothing to change, the tests pass
+answers = ["The step is already true.\nALREADY_DONE: src/sum.js:1 sum adds\nRUN: test"]
+prompts.clear()
+jobs.git(job.repo, "rm", "-q", "test/sum-wrong.test.js")
+jobs.git(job.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "own wrong test gone")
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Make sum add", s, max_tries=1)
+finally:
+    wb_ai.ask = real_ask
+check("ALREADY_DONE with nothing to change and passing tests is an answer (for the Checker to judge)",
+      r.ok and r.already_done == "src/sum.js:1 sum adds" and not r.commit, f"{r.status} {r.already_done!r} {r.message}")
+
+# a new project: code without a project file can't be built, and the Builder is told so
+empty_src = TMP / "empty"
+empty_src.mkdir()
+(empty_src / "BRIEF.md").write_text("# A new shop\n", encoding="utf-8")
+new_job = jobs.create(TMP / "Jobs", "Test", "New shop", str(empty_src))
+answers = ["=== FILE: src/Shop/Program.cs ===\n```csharp\nConsole.WriteLine(1);\n```\nRUN: build",
+           "=== FILE: src/Shop/Other.cs ===\n```csharp\nclass Other { }\n```\nRUN: build"]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(new_job, "Make the program", s, max_tries=2)
+finally:
+    wb_ai.ask = real_ask
+check("in a repository with no project file, a try can't pass and the next try is told to create one",
+      r.status == "failed" and "nothing to build or test yet" in prompts[1] and ".csproj" in prompts[1],
+      prompts[1][-700:] if len(prompts) > 1 else r.message)
+
+(cs / "src" / "Shop.Api").mkdir(parents=True)
+(cs / "src" / "Shop.Api" / "Shop.Api.csproj").write_text("<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>", encoding="utf-8")
+(cs / "src" / "Shop.Api" / "Program.cs").write_text("var app = WebApplication.Create();\napp.Run();\n", encoding="utf-8")
+(cs / "tests" / "Shop.Tests").mkdir(parents=True)
+(cs / "tests" / "Shop.Tests" / "Shop.Tests.csproj").write_text("<Project></Project>", encoding="utf-8")
+res2 = runner.Result("build", "tests/Shop.Tests/Shop.Tests.csproj", "dotnet build", False, 1, 1.0,
+                     "C:\\dotnet\\Microsoft.Common.CurrentVersion.targets(2205,5): warning MSB9008: The referenced "
+                     "project ..\\Shop.Api\\Shop.Api.csproj does not exist. [tests\\Shop.Tests\\Shop.Tests.csproj]\n"
+                     "tests\\Shop.Tests\\ApiTests.cs(6,67): error CS0246: The type or namespace name 'Program' could not be found")
+res3 = runner.Result("build", "client/package.json", "npm run build", False, 1, 1.0,
+                     'error during build:\nRollupError: Could not resolve entry module "index.html".')
+res4 = runner.Result("build", "tests/Shop.Tests/Shop.Tests.csproj", "dotnet build", False, 1, 1.0,
+                     "tests\\Shop.Tests\\T.cs(13,33): error CS0246: The type or namespace name 'IClassFixture<>' could "
+                     "not be found\ntests\\Shop.Tests\\T.cs(22,6): error CS0246: The type or namespace name 'Fact' could "
+                     "not be found\ntests\\Shop.Tests\\T.cs(13,69): error CS0122: 'Program' is inaccessible due to its "
+                     "protection level")
+lib = builder.compiler_hints(cs, [res4])
+check("library types get their using (xUnit), and an internal Program the public partial line",
+      any("IClassFixture<> comes from Xunit" in h for h in lib) and any("Fact comes from Xunit" in h for h in lib)
+      and any("Program is internal" in h for h in lib), "\n".join(lib))
+approved = [("Microsoft.EntityFrameworkCore.Sqlite", "8.0.11"),
+            ("Microsoft.AspNetCore.Identity.EntityFrameworkCore", "8.0.11"), ("Stripe.net", "53.2.0")]
+ph = builder.package_hints(
+    "src\\A\\Program.cs(2,17): error CS0234: The type or namespace name 'EntityFrameworkCore' does not exist in the "
+    "namespace 'Microsoft' (are you missing an assembly reference?)\nsrc\\A\\Program.cs(10,2): error CS1061: "
+    "'IdentityBuilder' does not contain a definition for 'AddEntityFrameworkStores' and no accessible extension method "
+    "'AddEntityFrameworkStores' accepting a first argument", approved, ["src/A/A.csproj"])
+check("a missing namespace or extension method points to the approved package that brings it (not Stripe)",
+      any("Microsoft.EntityFrameworkCore.Sqlite\" Version=\"8.0.11\"" in h for h in ph)
+      and any("Identity.EntityFrameworkCore\" Version=\"8.0.11\"" in h for h in ph)
+      and not any("Stripe" in h for h in ph), "\n".join(ph))
+(cs / "src" / "Shop.Api" / "Shop.Api.csproj").write_text(
+    '<Project Sdk="Microsoft.NET.Sdk.Web"><ItemGroup><Using Include="Shop.Api.Data" /></ItemGroup></Project>', encoding="utf-8")
+res5 = runner.Result("build", "src/Shop.Api/Shop.Api.csproj", "dotnet build", False, 1, 1.0,
+                     "src\\Shop.Api\\Program.cs(11,31): error CS0246: The type or namespace name 'ShopDbContext' could "
+                     "not be found\nsrc\\Shop.Api\\obj\\Debug\\net8.0\\Shop.Api.GlobalUsings.g.cs(2,27): error CS0234: "
+                     "The type or namespace name 'Data' does not exist in the namespace 'Shop.Api' (are you missing an "
+                     "assembly reference?)")
+res6 = runner.Result("test", "tests/Shop.Tests/Shop.Tests.csproj", "dotnet test", False, 1, 1.0,
+                     "System.AggregateException : Some services are not able to be constructed (... Unable to resolve "
+                     "service for type 'Shop.Api.Data.ShopDbContext' while attempting to activate 'UserStore`9[...]'.)")
+di = builder.compiler_hints(cs, [res6])
+check("a service nobody registered gets its registration, in the API's Program.cs",
+      any("nothing registers ShopDbContext" in h and "AddDbContext<ShopDbContext>" in h and "src/Shop.Api/Program.cs" in h
+          for h in di), "\n".join(di))
+more = builder.compiler_hints(cs, [res5])
+check("a type no file defines gets 'create it'; a <Using> for a namespace nobody declares is pointed out",
+      any("ShopDbContext is used in src/Shop.Api/Program.cs but no file" in h for h in more)
+      and any('<Using Include="Shop.Api.Data" /> in src/Shop.Api/Shop.Api.csproj' in h for h in more), "\n".join(more))
+hints = builder.compiler_hints(cs, [res2, res3])
+check("setup errors get their fix worked out: the real ProjectReference path, partial Program, Vite's index.html",
+      any('<ProjectReference Include="..\\..\\src\\Shop.Api\\Shop.Api.csproj" />' in h for h in hints)
+      and any("public partial class Program { }" in h and "src/Shop.Api/Program.cs" in h for h in hints)
+      and any("client/index.html" in h for h in hints), "\n".join(hints))
+
+# packages: an approved one may be added, any other is undone and blocks the pass
+pk_src = TMP / "pk"
+pk_src.mkdir()
+(pk_src / "package.json").write_text(json.dumps({"name": "p", "version": "1.0.0", "private": True,
+                                                 "scripts": {"test": "node --test"}, "dependencies": {}}), encoding="utf-8")
+(pk_src / "a.test.js").write_text("require('node:test')('ok', () => {});\n", encoding="utf-8")
+pk_job = jobs.create(TMP / "Jobs", "Test", "Packages", str(pk_src))
+(pk_job.folder / "approved-packages.txt").write_text("dayjs 1.11.13\n", encoding="utf-8")
+add_both = ('=== EDIT: package.json ===\n<<<<<<< SEARCH\n"dependencies": {}\n=======\n'
+            '"dependencies": {"dayjs": "1.11.13", "left-pad": "1.3.0"}\n>>>>>>> REPLACE\nRUN: test')
+add_ok = ('=== EDIT: package.json ===\n<<<<<<< SEARCH\n"dependencies": {}\n=======\n'
+          '"dependencies": {"dayjs": "1.11.13"}\n>>>>>>> REPLACE\nRUN: test')
+answers = [add_both]
+prompts.clear()
+systems: list[str] = []
+wb_ai.ask = lambda s_, m, **k: (systems.append(m[0]["content"]), fake_ask(s_, m, **k))[1]
+try:
+    r = builder.build_step(pk_job, "Format dates", s, max_tries=1)
+finally:
+    wb_ai.ask = real_ask
+pj = json.loads((pk_job.repo / "package.json").read_text(encoding="utf-8"))
+check("an unapproved package (left-pad) is undone, with its file, and the try can't pass",
+      r.status == "failed" and pj["dependencies"] == {} and any("aren't approved" in x for x in r.tries[0].refused),
+      f"{r.status} {pj} {r.tries[0].refused}")
+check("the Builder is told which packages it may add", bool(systems) and "dayjs 1.11.13" in systems[0])
+answers = [add_ok]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(pk_job, "Format dates", s, max_tries=1)
+finally:
+    wb_ai.ask = real_ask
+pj = json.loads((pk_job.repo / "package.json").read_text(encoding="utf-8"))
+check("an approved package stays", pj["dependencies"] == {"dayjs": "1.11.13"} and not r.tries[0].refused,
+      f"{pj} {r.tries[0].refused}")
 
 answers = ["NEEDS_APPROVAL: lodash for sums"]
 prompts.clear()

@@ -46,10 +46,11 @@ name = "node"
 markers = ["package.json"]
 
   [kind.actions.restore]
-  cmd = ["npm", "ci", "--no-audit", "--no-fund"]
-  when = ["file:package-lock.json"]
+  # npm install, not npm ci: a project the team starts has no package-lock.json yet (npm install writes one, and
+  # follows an existing one). Downloads only what package.json lists; asks first.
+  cmd = ["npm", "install", "--no-audit", "--no-fund"]
   ask = true
-  why = "downloads the npm packages in package-lock.json, which can run their own install scripts"
+  why = "downloads the npm packages package.json lists (and writes package-lock.json), which can run their own install scripts"
   timeout = 900
 
   [kind.actions.build]
@@ -105,6 +106,21 @@ text = """
   async all the way (no .Result/.Wait()); return Results.NotFound()/BadRequest() rather than throwing.
 - EF Core: never edit an existing migration; a schema change is a new migration, and applying it to a real
   database is an ask-first action.
+- EF Core with in-memory SQLite in tests: "DataSource=:memory:" is a new, empty database for every connection, so
+  the tables vanish. Create one `var connection = new SqliteConnection("DataSource=:memory:"); connection.Open();`,
+  pass that connection to UseSqlite(connection), keep it open for the factory's lifetime, and call
+  EnsureCreated() on it. In a WebApplicationFactory, remove the app's DbContextOptions<T> registration first.
+- Tests that log in: a cookie with SecurePolicy Always is only kept over https, so create the test client with
+  factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"),
+  HandleCookies = true }). Take test passwords from the same configuration the seeding reads (the factory's
+  Services.GetRequiredService<IConfiguration>()), never typed in a second time.
+- Rate limiting is built into ASP.NET Core 8 (no package): builder.Services.AddRateLimiter(o =>
+  o.AddFixedWindowLimiter("login", l => { l.PermitLimit = 10; l.Window = TimeSpan.FromMinutes(1); })),
+  app.UseRateLimiter(), and [EnableRateLimiting("login")] on the action (using Microsoft.AspNetCore.RateLimiting).
+- Integration tests: WebApplicationFactory<Program> needs `public partial class Program { }` at the end of a Program.cs
+  with top-level statements; the test project's <ProjectReference> path is relative to the test project's folder.
+- A Vite app needs index.html in its folder (with <div id="root"> and <script type="module" src="/src/main.jsx">),
+  vite.config.js with the React plugin, and src/main.jsx.
 - React (Vite): function components and hooks; keep the project's styling approach; no new UI library
   without asking.
 - JavaScript in the browser: no secrets in client code; fetch relative /api paths.

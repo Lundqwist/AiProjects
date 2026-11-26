@@ -50,7 +50,10 @@ class Settings:
     code_model: str = "qwen2.5-coder:7b"
     reasoning_model: str = "deepseek-r1:8b"
     writing_model: str = "gemma3:12b"
-    # The coding team (team\): the Builder is the code expert; these two read and judge
+    # The coding team (team\): the Builder is the code expert; the Lead plans, the Scout reads, the Checker judges
+    team_lead_model: str = "qwen3:30b"     # turns your request into a job card (team\lead.py); once per job, so
+    #   the slower model is worth it: one step for a small fix, no invented checks (Day 7; qwen3:8b split a
+    #   one-line fix into three steps and copied the prompt's example check)
     team_scout_model: str = "qwen2.5-coder:7b"
     # the Checker writes and runs a small test per requirement (probes.py). Off: with qwen3:8b judging its own
     # probes it was worse (misused harness, unexplained failures, runaway answers) and six times slower (Day 5b)

@@ -17,6 +17,7 @@ keyboard they are refused.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -75,6 +76,22 @@ def main() -> int:
     t.add_argument("--goal", help="set the job card's goal first")
     t.add_argument("--step", action="append", default=[], help="add a step to the job card first (repeatable; "
                                                                "@file.md reads it from a file)")
+    ch = sub.add_parser("chain", help="a project in phases: one team job per phase file, each from the last's result")
+    ch.add_argument("project", help="the project folder (a git repository with the brief)")
+    ch.add_argument("--phases", required=True, help="folder of phase requests (*.md, run in name order)")
+    ch.add_argument("--client", default="own")
+    ch.add_argument("--start-at", type=int, default=1, help="go on from this phase (the earlier ones delivered)")
+    ch.add_argument("--package", action="append", default=[], metavar="NAME=VERSION",
+                    help="a package you approve for the whole project (repeatable), e.g. Stripe.net=53.2.0")
+    ch.add_argument("--allow-restore", action="store_true",
+                    help="answer Start and package restores with yes yourself (for a run you approved in advance); "
+                         "every other question is answered no")
+    sf = sub.add_parser("scaffold", help="start a new project from a stack pack's template (before the team starts)")
+    sf.add_argument("folder", help="the project folder (a git repository)")
+    sf.add_argument("--template", default="web/dotnet-react")
+    sf.add_argument("--name", required=True, help="the project's name, e.g. DropShip")
+    sf.add_argument("--allow-restore", action="store_true", help="allow the package restore without asking")
+    sf.add_argument("--commit", action="store_true", help="commit the new files when they build and test")
     a = ap.parse_args()
 
     if a.cmd == "new":
@@ -83,6 +100,35 @@ def main() -> int:
         print(f"Job folder: {job.folder}\nBranch:     {job.branch}\n")
         print(job.log_path.read_text(encoding="utf-8"))
         return 0
+
+    if a.cmd == "scaffold":
+        from team import scaffold
+        folder = Path(a.folder)
+        written = scaffold.make(a.template, folder, a.name)
+        print(f"Wrote {len(written)} files from {a.template}:\n" + "\n".join(f"  {w}" for w in written))
+        restore_ok = (lambda t, x, b: b[0] if re.search(r"wants to run <b>(dotnet restore|npm install) ", x) else b[-1])
+        ok, report = scaffold.verify(folder, restore_ok if a.allow_restore else ask_here)
+        print("\n" + report)
+        if ok and a.commit:
+            print(f"\nCommitted {scaffold.commit(folder, f'Project skeleton from the {a.template} template')}")
+        return 0 if ok else 1
+
+    if a.cmd == "chain":
+        from datetime import datetime
+        from team import chain
+
+        def approved(title: str, text: str, buttons: list[str]) -> str:
+            restore = re.search(r"wants to run <b>(dotnet restore|npm install|composer install) ", text)
+            yes = title == "Start this job?" or (title == "Run a command?" and restore is not None)
+            print(f"[{datetime.now():%H:%M:%S}] asked: {title} -> {buttons[0] if yes else buttons[-1]}", flush=True)
+            return buttons[0] if yes else buttons[-1]
+
+        results = chain.run_chain(Settings.load(), Path(a.project), chain.phase_files(Path(a.phases)), client=a.client,
+                                  ask_fn=approved if a.allow_restore else ask_here, start_at=a.start_at,
+                                  packages=[p.replace("=", " ", 1) for p in a.package],
+                                  on_event=lambda t, d: print(f"[{datetime.now():%H:%M:%S}] {t}: {d}", flush=True))
+        print("\n" + "\n".join(f"{r.phase}: {r.status} ({r.minutes} min) · {r.job}" for r in results))
+        return 0 if results and all(r.status == "done" for r in results) else 1
 
     job = jobs.Job.open(a.job)
     if a.cmd == "card":

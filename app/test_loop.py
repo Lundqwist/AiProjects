@@ -78,6 +78,9 @@ v = checker.parse("R1: DONE - x\nVERDICT: FIX\nFIX list:\n" + "".join(f"{i}. a.l
                   + "300. b.lua:1 - fine (already correct) - no change needed\n301. c.lua:2 - real - fix it\n", 1)
 check("Checker: a runaway FIX list is cut to its different items, 'no change needed' items dropped",
       v.fix_list == ["a.lua:3 - same - same", "c.lua:2 - real - fix it"], str(v.fix_list[:5]))
+v = checker.parse("R1: DONE - fine\nR2: DONE - fine\nR5: MISSING - made up\nR10: MISSING - made up\nVERDICT: PASS", 2)
+check("Checker: requirement numbers that don't exist are ignored", v.verdict == "PASS" and set(v.requirements) == {1, 2},
+      f"{v.verdict} {v.requirements}")
 v = checker.parse("R1: DONE - fine\nR2: MISSING - no null\nVERDICT: PASS | FIX | ASK", 2)
 check("Checker: the copied template line is not a PASS", v.verdict == "FIX" and v.fix_list == ["R2: no null"],
       f"{v.verdict} {v.fix_list}")
@@ -189,6 +192,44 @@ finally:
 check("only the Builder's own test fails: the model is asked which is wrong, and its PASS becomes FIX",
       seen and "Tests the Builder wrote itself fail: test/own.test.js" in seen[0] and v.verdict == "FIX"
       and "test/own.test.js fails" in v.fix_list[0], f"{v.verdict} {v.fix_list}")
+
+# a step that changed nothing: the Checker is shown the code the Builder points at
+seen.clear()
+wb_ai.ask = lambda s_, m, **k: (seen.append(m[-1]["content"]), wb_ai.Answer("R1: DONE - x\nVERDICT: PASS", "c", "h"))[1]
+try:
+    head = jobs.git(job.repo, "rev-parse", "HEAD")
+    v = checker.check(s, job, "sum adds", ["sum adds"], head, already_done="src/sum.js:1 adds already",
+                      context_files=["test/sum.test.js"])
+finally:
+    wb_ai.ask = real_ask
+check("with no changes, the Checker gets the files the Builder names and the Scout's, and is told why",
+      seen and "already does it (src/sum.js:1 adds already)" in seen[0] and "--- src/sum.js ---" in seen[0]
+      and "--- test/sum.test.js ---" in seen[0], seen[0][-900:] if seen else "")
+
+# step attempts: a failed attempt is undone and the step starts again; a later pass counts
+retry_job = jobs.create(TMP / "Jobs", "Test", "Retry", str(client))
+script = {"scout": [SCOUT, SCOUT], "builder": [
+    "=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\n(a, b) => a - b\n=======\n(a, b) => a * b\n>>>>>>> REPLACE\n"
+    "=== FILE: src/junk.js ===\n```js\nexports.junk = 1;\n```\nRUN: test",
+    "=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\n(a, b) => a - b\n=======\n(a = 0, b = 0) => a + b\n>>>>>>> REPLACE\nRUN: test"],
+    "checker": ["R1: DONE - adds\nR2: DONE - 0\nVERDICT: PASS"]}
+
+
+def fake_retry(s_, messages, **kw):
+    system = messages[0]["content"]
+    role = "scout" if "You are the Scout" in system else "checker" if "You are the Checker" in system else "builder"
+    return wb_ai.Answer(script[role].pop(0), role, "here")
+
+
+wb_ai.ask = fake_retry
+try:
+    r = loop.run_step(s, retry_job, "Make sum add", max_tries=1, attempts=2)
+finally:
+    wb_ai.ask = real_ask
+check("a step that fails its first attempt starts again from where it began, and passes on the second",
+      r.ok and not (retry_job.repo / "src" / "junk.js").exists() and "a = 0, b = 0" in
+      (retry_job.repo / "src" / "sum.js").read_text(encoding="utf-8")
+      and "Step attempt 1 of 2 didn't pass" in retry_job.log_path.read_text(encoding="utf-8"), f"{r.status} {r.message}")
 
 # ---- Checker probes -----------------------------------------------------------------------------
 
