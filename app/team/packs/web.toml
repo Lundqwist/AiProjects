@@ -114,9 +114,18 @@ text = """
   factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"),
   HandleCookies = true }). Take test passwords from the same configuration the seeding reads (the factory's
   Services.GetRequiredService<IConfiguration>()), never typed in a second time.
+- Identity sign-in: SignInManager.PasswordSignInAsync(email or user, password, isPersistent, lockoutOnFailure)
+  checks the password AND sets the login cookie. CheckPasswordSignInAsync only checks the password: no cookie, so
+  nobody is logged in afterwards. A test of login proves it by calling an endpoint that needs login with the same
+  client afterwards (200 there, and 401 again after logout).
 - Rate limiting is built into ASP.NET Core 8 (no package): builder.Services.AddRateLimiter(o =>
   o.AddFixedWindowLimiter("login", l => { l.PermitLimit = 10; l.Window = TimeSpan.FromMinutes(1); })),
   app.UseRateLimiter(), and [EnableRateLimiting("login")] on the action (using Microsoft.AspNetCore.RateLimiting).
+  Per client IP instead: o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(
+  ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions { PermitLimit = 10,
+  Window = TimeSpan.FromMinutes(1) })) (using System.Threading.RateLimiting). Set o.RejectionStatusCode = 429 (the
+  default is 503). Tests that share one factory share its limiter: a test that uses up the limit gets its own
+  factory, or the other login tests start getting 429.
 - Integration tests: WebApplicationFactory<Program> needs `public partial class Program { }` at the end of a Program.cs
   with top-level statements; the test project's <ProjectReference> path is relative to the test project's folder.
 - A Vite app needs index.html in its folder (with <div id="root"> and <script type="module" src="/src/main.jsx">),

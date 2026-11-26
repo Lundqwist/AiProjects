@@ -300,6 +300,19 @@ check("PROBE-WRONG is accepted, and the same probe isn't held against the code a
       v2.verdict == "PASS" and v3.verdict == "PASS" and state.get("wrong") == {2} and len(asked_probe) == 1,
       f"{v2.verdict} {v3.verdict} {state.get('wrong')}")
 
+ref = TMP / "ref"
+(ref / "src" / "Controllers").mkdir(parents=True)
+(ref / "src" / "Program.cs").write_text("var app = builder.Build();\n", encoding="utf-8")
+(ref / "src" / "Controllers" / "AuthController.cs").write_text('[EnableRateLimiting("login")]\n', encoding="utf-8")
+(ref / "README.md").write_text("# r\n", encoding="utf-8")
+check("the Checker also reads the unchanged files of a small repository (not READMEs)",
+      checker.reference_files(ref, ["src/Program.cs"], "apply the limiter") == ["src/Controllers/AuthController.cs"],
+      str(checker.reference_files(ref, ["src/Program.cs"], "apply the limiter")))
+(ref / "src" / "Big.cs").write_text("x" * 40000, encoding="utf-8")
+check("in a big repository only the unchanged files the step names",
+      checker.reference_files(ref, ["src/Program.cs"], "change AuthController") == ["src/Controllers/AuthController.cs"]
+      and checker.reference_files(ref, ["src/Program.cs"], "apply the limiter") == [])
+
 shutil.rmtree(TMP, ignore_errors=True)
 if failures:
     print("\n" + "\n".join(failures))

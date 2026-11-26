@@ -172,6 +172,28 @@ c = jobs.JobCard.from_markdown(lead._card_text("<think>plan</think>\n# Job: X\nC
 notes = lead.tidy(c, ["web"], "own")
 check("a card with too many steps is cut to 8, with a note; questions are kept",
       len(c.steps) == 8 and any("10 steps" in n for n in notes) and c.questions == ["Which colour?"], str(notes))
+two = ("Draft:\n# Job: Draft\nClient: own\nStack pack: web\nGoal: g\nAcceptance checks:\n- t\nOut of scope: -\nSteps:\n"
+       "1. draft step - check: c\nQuestions for Bjarne:\nnone\n\nFinal:\n```markdown\n# Job: Final\nClient: own\n"
+       "Stack pack: web\nGoal: g\nAcceptance checks:\n- t\n- t\nOut of scope: -\nSteps:\n1. Do A - check: c\n"
+       "2. do a. - check: c\n3. Do B - check: c\nQuestions for Bjarne:\nnone\n```")
+c = jobs.JobCard.from_markdown(lead._card_text(two))
+notes = lead.tidy(c, ["web"], "own")
+check("of a draft and a card only the last card is read; repeated steps and checks are dropped",
+      c.title == "Final" and [st.text for st in c.steps] == ["Do A", "Do B"] and c.checks == ["t"], c.to_markdown())
+
+# ---- the client's test helpers a step names can be changed ------------------------------------------
+from team import edits  # noqa: E402
+hrepo = TMP / "helpers"
+(hrepo / "tests").mkdir(parents=True)
+(hrepo / "tests" / "ShopFactory.cs").write_text("public class ShopFactory : WebApplicationFactory<Program> { }\n",
+                                                 encoding="utf-8")
+(hrepo / "tests" / "CartTests.cs").write_text("public class CartTests { [Fact] public void Adds() { } }\n",
+                                              encoding="utf-8")
+locked = {"tests/ShopFactory.cs", "tests/CartTests.cs"}
+check("a test helper the step names is unlocked; a file with test cases stays locked, named or not",
+      edits.unlocked_helpers(hrepo, locked, "Give ShopFactory a SeedUsers property; make CartTests pass")
+      == {"tests/ShopFactory.cs"}
+      and edits.unlocked_helpers(hrepo, locked, "Add a login endpoint") == set())
 
 # ---- the coverage check: every item of the request is in some step ---------------------------------
 REQ = """# Phase: users
@@ -219,11 +241,45 @@ try:
     check("items still missing after the rewrite become steps of their own",
           len(c5.steps) == 2 and c5.steps[1].text == "An `AuthController` → `GET /me` gives the role."
           and any("added as steps" in n for n in notes), str(notes) + str([st.text for st in c5.steps]))
-    cov_replies[:] = [ONE_STEP, "I can't tell."]
+    cov_replies[:] = [ONE_STEP, "I can't tell.", "Still can't."]
     c6, notes = lead.plan(s, cov_job, REQ)
-    check("an unreadable coverage answer changes nothing", len(c6.steps) == 1 and not cov_replies, str(notes))
+    check("an unreadable coverage answer is asked once more without thinking, then changes nothing",
+          len(c6.steps) == 1 and not cov_replies, str(notes))
+    check("the coverage answer is written to the job log", "Lead · coverage check" in
+          (cov_job.folder / "job-log.md").read_text(encoding="utf-8"))
+    req_file = REQ.replace("- Tests: each user logs in.", "- Tests in `tests/LoginTests.cs`: each user logs in.")
+    cov_replies[:] = [FULL, "I1: 1\nI2: 2\nI3: 2\nI4: 3", FULL, "I1: 1\nI2: 2\nI3: 2\nI4: 3"]
+    c7, notes = lead.plan(s, cov_job, req_file)
+    check("an item naming a file no step names is missing even when the model says it's covered",
+          c7.steps[-1].text.endswith("`tests/LoginTests.cs`: each user logs in.") and len(c7.steps) == 4,
+          str([st.text for st in c7.steps]))
 finally:
     wb_ai.ask = real_ask
+
+steps = [jobs.Step("Add the `POST /api/orders` endpoint"), jobs.Step("Write tests for `GET /api/admin/orders`")]
+check("an API route the request names must be in a step that builds, not only in a test step; test items exempt",
+      lead.unnamed_files("Admin: `GET /api/admin/orders?status=Open` lists orders", steps)
+      == ["/api/admin/orders?status=Open"]
+      and lead.unnamed_files("`POST /api/orders` places an order", steps) == []
+      and lead.unnamed_files("Tests: `GET /api/admin/orders` gives 403 to others", steps) == [])
+
+# ---- the chain reads phase requests as main has them ----------------------------------------------
+from team import chain  # noqa: E402
+proj = TMP / "proj"
+(proj / "phases").mkdir(parents=True)
+jobs.git(proj, "init", "-q", "-b", "main")
+(proj / "phases" / "1-a.md").write_text("old request\n", encoding="utf-8")
+jobs.git(proj, "add", "-A")
+jobs.git(proj, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "old")
+jobs.git(proj, "branch", "ai/phase-1")
+(proj / "phases" / "1-a.md").write_text("clarified request\n", encoding="utf-8")
+jobs.git(proj, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "clarified")
+jobs.git(proj, "switch", "-q", "ai/phase-1")
+check("a phase request is read from main even when the folder stands on an older phase branch",
+      chain.read_request(proj.resolve(), proj / "phases" / "1-a.md") == "clarified request")
+outside = TMP / "outside.md"
+outside.write_text("from disk\n", encoding="utf-8")
+check("a request outside the repository is read from disk", chain.read_request(proj.resolve(), outside) == "from disk")
 
 shutil.rmtree(TMP, ignore_errors=True)
 if failures:

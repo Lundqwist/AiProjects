@@ -34,6 +34,20 @@ def phase_files(folder: Path) -> list[Path]:
     return sorted(p for p in Path(folder).glob("*.md"))
 
 
+def read_request(project: Path, f: Path) -> str:
+    """A phase request as `main` has it, when the phase file is in the project's repository: the folder may stand on
+    an ai/phase-<n> branch from an earlier run, whose copy of the phase files is older (Day 7: a run built 1a2 from
+    the request as it was before it was clarified). Else, and when main doesn't have it, the file as it is."""
+    try:
+        rel = Path(f).resolve().relative_to(project).as_posix()
+        text = jobs.git(project, "show", f"main:{rel}")
+        if text.strip():
+            return text.strip()
+    except Exception:  # noqa: BLE001 - outside the repository, no main, or not committed: read the file
+        pass
+    return Path(f).read_text(encoding="utf-8").strip()
+
+
 def deliver(project: Path, job: jobs.Job, branch: str) -> str:
     """Fetch the job's branch into the project folder as `branch` (local git, nothing leaves the PC). An ai/phase-<n>
     branch from an earlier run of the chain is replaced: those branches are the chain's own output."""
@@ -48,12 +62,12 @@ def run_chain(s: Settings, project: Path, phases: list[Path], *, client: str, as
     """max_tries: Builder tries per step; 5 here, not 3: a project built from nothing needs more rounds."""
     project = Path(project).resolve()
     say = on_event or (lambda t, d: None)
-    brief = (project / brief_file).read_text(encoding="utf-8") if (project / brief_file).exists() else ""
+    brief = read_request(project, project / brief_file) if (project / brief_file).exists() else ""
     root = Path(jobs_root or s.jobs_dir)
     source: str = str(project)
     # the requests are read before the switch: a phase branch holds the phase files as they were when it was made,
     # and a request clarified since must not be swapped back for the old one
-    requests = [f.read_text(encoding="utf-8").strip() for f in phases]
+    requests = [read_request(project, f) for f in phases]
     # start from main, or from the phase an earlier run delivered; never stand on a branch the chain will replace
     jobs.git(project, "switch", "--quiet", "main" if start_at == 1 else f"ai/phase-{start_at - 1}")
     results: list[PhaseResult] = []

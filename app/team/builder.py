@@ -86,6 +86,60 @@ def test_project_dirs(repo: Path) -> set[str]:
 SMALL_REPO = 30000  # a repository this small (characters of source) is shown whole, whatever the Scout picked
 
 
+USING_HINT = re.compile(r"add `using ([\w.]+);` at the top of ([\w./-]+\.cs)")
+
+
+def add_usings(repo: Path, results: list[runner.Result], locked: set[str]) -> list[str]:
+    """Adds the using lines the compiler hints name to the files they name (not the client's tests), after the
+    file's last using line. Returns "file: using X;" for each line added. Day 7: with the hint in its feedback, the
+    Builder still left `using DropShip.Api.Data;` out of a test file five tries running. A using line the compiler
+    asks for, for a type or extension method that exists, is a change with one right answer, so the program makes it."""
+    added = []
+    for ns, rel in dict.fromkeys(USING_HINT.findall("\n".join(compiler_hints(repo, results)))):
+        p = repo / rel
+        if rel in locked or not p.exists():
+            continue
+        raw = p.read_bytes()
+        bom = raw.startswith(b"\xef\xbb\xbf")
+        text = raw[3:].decode("utf-8", errors="replace") if bom else raw.decode("utf-8", errors="replace")
+        if re.search(rf"^\s*(?:global\s+)?using\s+{re.escape(ns)}\s*;", text, re.M):
+            continue
+        nl = "\r\n" if "\r\n" in text else "\n"
+        lines = text.split(nl)
+        last = max((i for i, ln in enumerate(lines) if re.match(r"\s*using\s+[\w.]+\s*;", ln)), default=-1)
+        lines.insert(last + 1, f"using {ns};")
+        p.write_bytes((b"\xef\xbb\xbf" if bom else b"") + nl.join(lines).encode("utf-8"))
+        added.append(f"{rel}: using {ns};")
+    return added
+
+
+def _contains(path: Path, text: str) -> bool:
+    """Whether the file holds `text`, ignoring line ends and the spaces at line ends."""
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    norm = lambda s: "\n".join(ln.rstrip() for ln in s.replace("\r\n", "\n").split("\n")).strip()  # noqa: E731
+    return norm(text) in norm(body)
+
+
+def must_see(text: str, files: list[str]) -> list[str]:
+    """The repository's files that the step or the last try's errors name: by path, by file name, or by the name of
+    the class a .cs/.java/.kt file is called after. Day 7: the step said "Update DropShipFactory", the Scout picked
+    other files, and the Builder wrote SEARCH blocks from a file it had never seen (refused four times), then added a
+    second ConfigureWebHost (CS0111) next to the real one."""
+    low = text.replace("\\", "/").lower()
+    out = []
+    for rel in files:
+        name = rel.rsplit("/", 1)[-1].lower()
+        stem = name.rsplit(".", 1)[0]
+        if rel.lower() in low or re.search(rf"(?<![\w.]){re.escape(name)}\b", low) or (
+                name.endswith((".cs", ".java", ".kt")) and len(stem) >= 6
+                and re.search(rf"\b{re.escape(stem)}\b", low)):
+            out.append(rel)
+    return out
+
+
 def shown_files(repo: Path, files: list[str], picked: list[str] | None) -> list[str]:
     """The Scout's files first; the rest too when the repository is small (a file the Scout missed is the most
     common way to fail, and a small repository costs little to show whole)."""
@@ -221,6 +275,19 @@ def approved_packages(job: jobs.Job) -> list[tuple[str, str]]:
 
 
 # a namespace or extension method the compiler can't find -> the package that brings it
+# extension methods by namespace (Day 7: ToListAsync and FirstOrDefaultAsync failed five tries for want of one using)
+EXTENSION_NS = {m: "Microsoft.EntityFrameworkCore" for m in (
+    "ToListAsync", "ToArrayAsync", "ToDictionaryAsync", "FirstOrDefaultAsync", "FirstAsync", "SingleOrDefaultAsync",
+    "SingleAsync", "AnyAsync", "AllAsync", "CountAsync", "LongCountAsync", "SumAsync", "MinAsync", "MaxAsync",
+    "AverageAsync", "Include", "ThenInclude", "AsNoTracking", "ExecuteUpdateAsync", "ExecuteDeleteAsync",
+    "LastOrDefaultAsync", "ForEachAsync", "LoadAsync")}
+EXTENSION_NS.update({m: "System.Linq" for m in ("Select", "Where", "FirstOrDefault", "Any", "ToList", "OrderBy",
+                                                  "OrderByDescending", "Sum", "Count", "ToArray", "GroupBy")})
+EXTENSION_NS.update({m: "Microsoft.Extensions.DependencyInjection" for m in (
+    "CreateScope", "CreateAsyncScope", "GetRequiredService", "GetService", "GetServices", "AddScoped", "AddSingleton",
+    "AddTransient", "AddDbContext", "AddAuthorization", "AddAuthentication", "AddControllers")})
+EXTENSION_NS.update({m: "System.Net.Http.Json" for m in ("PostAsJsonAsync", "PutAsJsonAsync", "ReadFromJsonAsync",
+                                                         "GetFromJsonAsync")})
 NEEDS_PACKAGE = {"Microsoft.EntityFrameworkCore.Sqlite": ("UseSqlite", "Microsoft.Data.Sqlite", "Microsoft.EntityFrameworkCore",
                                                          "AddDbContext", "DbContext", "DbSet"),
                  "Microsoft.AspNetCore.Identity.EntityFrameworkCore": ("AddEntityFrameworkStores", "IdentityDbContext",
@@ -343,6 +410,19 @@ def compiler_hints(repo: Path, results: list[runner.Result]) -> list[str]:
         if prog:
             hints.append(f"Program is internal: add the line `public partial class Program {{ }}` at the end of "
                          f"{prog.relative_to(repo).as_posix()}, so the tests can use WebApplicationFactory<Program>.")
+    # an extension method whose namespace isn't imported (the package is there): the using line
+    for f, method in sorted(set(re.findall(r"([\w./\\-]+\.cs)\(\d+,\d+\): error CS1061: .*? does not contain a "
+                                           r"definition for '(\w+)' and no accessible extension method", text))):
+        ns = EXTENSION_NS.get(method)
+        if ns:
+            hints.append(f"{method} is an extension method from {ns}: add `using {ns};` at the top of "
+                         f"{f.replace(chr(92), '/')}.")
+    # a member written a second time next to the one that was there: merge, don't add
+    for m in sorted(set(re.findall(r"([\w./\\-]+\.cs)\(\d+,\d+\): error CS0111: Type '(\w+)' already defines a member "
+                                   r"called '(\w+)'", text))):
+        hints.append(f"{m[0].replace(chr(92), '/')}: {m[1]} now has two {m[2]} methods. Keep ONE: put what you added "
+                     f"into the existing {m[2]} (SEARCH the existing method as the file shows it above) and remove "
+                     f"the second copy.")
     # a ProjectReference to a path that doesn't exist: the real path, worked out from the files
     for m in re.finditer(r"warning MSB9008: The referenced project (.+?) does not exist\. \[(.+?\.csproj)\]", text):
         ref, owner = m.group(1).strip(), m.group(2).strip().replace("\\", "/")
@@ -427,6 +507,7 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
     # the client's tests are those in the code as received; tests from earlier steps are the Builder's own
     received = set(job.client_files())
     client_tests = edits.protected_tests(repo, sorted(received), test_project_dirs(repo))
+    client_tests -= edits.unlocked_helpers(repo, client_tests, step)
     replies = job.folder / "builder"
     replies.mkdir(exist_ok=True)
     step_no = len(list(replies.glob("step-*-try-1.md"))) + 1
@@ -440,7 +521,8 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
     last_reply = ""
     for n in range(1, max_tries + 1):
         files = repo_files(repo)
-        shown = shown_files(repo, files, pack.files if pack else None)
+        named = must_see(step + "\n" + feedback, files)
+        shown = shown_files(repo, files, named + [f for f in (pack.files if pack else []) if f not in named] or None)
         text, ctx_notes = context_pack(repo, shown, client_tests)
         hidden = [f for f in files if f not in shown]
         if hidden:
@@ -502,6 +584,14 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         # in a FIX round, disputing every item (no edits) is a real answer: the Checker decides on it next
         # "the code already does this" is a real answer too (an earlier step did the work: Day 7, where a model that
         # had nothing left to change looped until its answer ran out); the Checker then judges it like any other
+        if not parsed.edits and parsed.noops and not parsed.already_done and not parsed.problems:
+            # every block repeats code that is in the file already: the Builder is saying "this is already there"
+            # the only way it knows (Day 7: five tries of the admin endpoints an earlier step had written, each
+            # counted as no answer, until the step failed). Counted as ALREADY_DONE when the code is really there.
+            there = sorted({p for p, text in parsed.noops if text.strip() and _contains(repo / p, text)})
+            if there and len(there) == len({p for p, _ in parsed.noops}):
+                parsed.already_done = ("its edits only repeated code that is already in " + ", ".join(there)
+                                       + " (the code there already does the step, the Builder says)")
         answered = ever_applied or bool(fix_list and parsed.disputes) or bool(parsed.already_done)
         if parsed.already_done:
             result.already_done = parsed.already_done
@@ -509,6 +599,12 @@ def build_step(job: jobs.Job, step: str, s: Settings | None = None, *, ask_fn: r
         on_event(f"Try {n}: {len(rec.applied)} edits applied, {len(rec.refused)} refused"
                  + (f", {len(parsed.disputes)} disputed" if parsed.disputes else ""), "building and testing")
         results, stop = _checks(job, ask_fn, on_event) if answered else ([], None)
+        if results and not stop and not all(r.ok for r in results):
+            usings = add_usings(repo, results, client_tests)
+            if usings:
+                job.log(f"Builder · try {n} · the program added using lines", "\n".join(usings))
+                on_event(f"Try {n}: added {len(usings)} using line(s) the compiler asked for", "building again")
+                results, stop = _checks(job, ask_fn, on_event)
         rec.checks = runner.report(results, "build and test") if results else ""
         job.log(f"Builder · try {n} · {seconds:.0f} s · {len(rec.applied)} applied, {len(rec.refused)} refused"
                 + (f", {len(parsed.disputes)} disputed" if parsed.disputes else ""),

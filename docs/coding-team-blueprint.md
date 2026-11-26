@@ -646,8 +646,49 @@ first); the chat now shows the card instead of a summary.
 junk seller 1/2, cart 1/2, boot switch 1/2, Wake-on-LAN 0/2, TV remote 0/2) in 28 minutes of model time (the same
 pass rate as before, two to five times faster: no more runaway replies).
 
-**Not done yet: the real task.** Day 7's "done when" is one real client task delivered as a reviewed branch. That
-needs a task from you; the team is ready for it.
+**The real task:** see Day 7b.
+
+## Day 7b: the real task, DropShipV1 (2026-11-26, stopped by Bjarne)
+
+**The task:** a new B2B dropship site for alcoholic drinks (licensed businesses order, distributors ship; ordering,
+shipping, customer care, invoices, bookkeeping; example logins for admin, distributor and client), built from
+nothing by the team only, in `E:\DropShipV1`: ASP.NET Core 8 + EF Core SQLite + Identity + React/Vite, Stripe in
+test mode. Claude wrote no app code, only the brief, 13 phase requests (`docs\phases\`, 1a1 to 7a) and team tooling.
+Run with `cli.py chain` (`app\team\chain.py`): one job per phase, each from the last, finished phases fetched back as
+`ai/phase-<n>`.
+
+**Result: 5 of 13 phases done, then stopped.** `ai/phase-5` holds 1a1 to 1b: the database with the three roles, the
+example users seeded from configuration (`SeedData`, which fails loudly), cookie login with `PasswordSignInAsync`,
+logout and `/me` (401 without login, 401 again after logout), a per-IP login rate limit (10 a minute, then 429) and
+the first React pages. Claude built it and ran its 10 tests: all pass. Gap: the login tests only try the admin user.
+Phase 2a (client accounts and approval) failed five runs in a row, each on a new weakness, and Bjarne stopped the
+project there. It took the whole day: 28 chain runs from about 09:00 to 22:00.
+
+**What the team couldn't do on its own, and what was changed** (each with a test):
+
+- *Scaffolding from nothing*: the Builder never got an empty repository to build. Fix: templates
+  (`app\team\scaffold.py`, `packs\web\templates\dotnet-react`), the empty projects only.
+- *The Lead dropped parts of the request* (1a2 became one step, the configuration; 2a had no step that built the
+  admin endpoints), and the Checker, held to the step, passed it. Fix: the coverage check (`lead.request_items`,
+  `missing_items`, `unnamed_files`): every list item of the phase request must be in a step; a file or API route the
+  item names must be named by a step that builds; else the card is rewritten once and what's left becomes steps.
+  Also: only the last card in a reply is read, repeated steps are dropped.
+- *False passes*: 1a3's login only checked the password (`CheckPasswordSignInAsync`, no cookie) and its tests never
+  called `/me` after login; the Checker passed it. Fix: stack facts in `web.toml` (sign-in, rate limiting per IP,
+  shared limiters in tests); the Checker also reads the unchanged files of a small repository (it had asked three
+  rounds for an attribute `AuthController.cs` already had).
+- *The Builder's blind spots*: it edited files it hadn't been shown (now it always sees the files the step and the
+  last errors name), couldn't change a test helper from an earlier phase (helpers the step names, with no test
+  cases, are unlocked), wrote a second `ConfigureWebHost` (CS0111 hint), left out `using` lines even with the hint in
+  front of it (the program now adds them), and answered code that was already there with edits that changed nothing
+  (now counted as ALREADY_DONE when the code is really there).
+- *Chain*: phase requests are read from `main`, not from the phase branch the folder stands on (a run had built 1a2
+  from the old request).
+
+**The lesson:** with these models (Builder `qwen3-coder:30b`, Scout `qwen2.5-coder:7b`, Checker `qwen3:8b`, Lead
+`qwen3:30b`) the team does well on a small, well-specified change to code that exists, and badly on building a
+product from nothing: every phase brings out a new weak point, and a run costs 30 to 90 minutes. The false PASSes
+(1a2, 1a3) are why every job still needs your review. Phases left: 2a to 7a.
 
 ## START HERE FIRST
 
@@ -723,4 +764,5 @@ without calling Claude, per week). The review gate means a false PASS reaches yo
 Inside the app, call `wb_create.make_room()` before the Builder (not from the CLI: it would unload the model the
 CLI is about to use).
 
-Still wanted from you: one small real client task (no names needed) for Day 7.
+**Day 7's real task was tried and stopped** (2026-11-26; see Day 7b): DropShipV1, a site built from nothing, 5 of
+13 phases done. Next, if picked up: a small real change to existing code, which is where the team is strong.

@@ -309,6 +309,23 @@ finally:
     wb_ai.ask = real_ask
 check("ALREADY_DONE with nothing to change and passing tests is an answer (for the Checker to judge)",
       r.ok and r.already_done == "src/sum.js:1 sum adds" and not r.commit, f"{r.status} {r.already_done!r} {r.message}")
+answers = ["=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\n(a, b) => a + b\n=======\n(a, b) => a + b\n>>>>>>> REPLACE\nRUN: test"]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Make sum add", s, max_tries=1)
+finally:
+    wb_ai.ask = real_ask
+check("edits that only repeat code already in the file count as ALREADY_DONE (for the Checker to judge)",
+      r.ok and "already in src/sum.js" in r.already_done and not r.commit, f"{r.status} {r.already_done!r}")
+answers = ["=== EDIT: src/sum.js ===\n<<<<<<< SEARCH\n(a, b) => a * 2\n=======\n(a, b) => a * 2\n>>>>>>> REPLACE\nRUN: test"]
+prompts.clear()
+wb_ai.ask = fake_ask
+try:
+    r = builder.build_step(job, "Make sum add", s, max_tries=1)
+finally:
+    wb_ai.ask = real_ask
+check("... but not when the repeated code isn't in the file", not r.ok and not r.already_done, f"{r.status}")
 
 # a new project: code without a project file can't be built, and the Builder is told so
 empty_src = TMP / "empty"
@@ -426,6 +443,42 @@ try:
 finally:
     wb_ai.ask = real_ask
 check("NEEDS_APPROVAL stops the step and asks", r.status == "ask" and "lodash" in r.message)
+
+dup = runner.Result("build", "tests/T/T.csproj", "dotnet build", False, 1, 1.0,
+                    "tests\\T\\ShopFactory.cs(52,29): error CS0111: Type 'ShopFactory' already defines a member called "
+                    "'ConfigureWebHost' with the same parameter types [tests\\T\\T.csproj]")
+hints = builder.compiler_hints(cs, [dup])
+check("CS0111: a method written twice gets a hint to merge into the existing one",
+      any("tests/T/ShopFactory.cs: ShopFactory now has two ConfigureWebHost methods" in h for h in hints), str(hints))
+ext = runner.Result("build", "src/A/A.csproj", "dotnet build", False, 1, 1.0,
+                    "src\\A\\Controllers\\AuthController.cs(59,18): error CS1061: 'DbSet<ClientProfile>' does not "
+                    "contain a definition for 'FirstOrDefaultAsync' and no accessible extension method "
+                    "'FirstOrDefaultAsync' accepting a first argument of type 'DbSet<ClientProfile>' could be found")
+check("CS1061 on a known extension method gets its using line",
+      builder.compiler_hints(cs, [ext]) == ["FirstOrDefaultAsync is an extension method from "
+                                            "Microsoft.EntityFrameworkCore: add `using Microsoft.EntityFrameworkCore;` "
+                                            "at the top of src/A/Controllers/AuthController.cs."],
+      str(builder.compiler_hints(cs, [ext])))
+(cs / "Auth").mkdir(exist_ok=True)
+(cs / "Auth" / "AuthController.cs").write_bytes(b"\xef\xbb\xbfusing System;\r\nusing System.Linq;\r\n\r\nclass C { AppUser u; }\r\n")
+(cs / "Auth" / "Locked.cs").write_text("class L { AppUser u; }\n", encoding="utf-8")
+miss = runner.Result("build", "Shop.csproj", "dotnet build", False, 1, 1.0,
+                     "Auth\\AuthController.cs(4,11): error CS0246: The type or namespace name 'AppUser' could not be found\n"
+                     "Auth\\Locked.cs(1,11): error CS0246: The type or namespace name 'AppUser' could not be found")
+added = builder.add_usings(cs, [miss], {"Auth/Locked.cs"})
+body = (cs / "Auth" / "AuthController.cs").read_bytes()
+check("the using lines the compiler asks for are added by the program (after the last using, BOM and CRLF kept), "
+      "never to the client's tests, and only once",
+      added == ["Auth/AuthController.cs: using Shop.Models;"]
+      and body == b"\xef\xbb\xbfusing System;\r\nusing System.Linq;\r\nusing Shop.Models;\r\n\r\nclass C { AppUser u; }\r\n"
+      and "Shop.Models" not in (cs / "Auth" / "Locked.cs").read_text(encoding="utf-8")
+      and builder.add_usings(cs, [miss], {"Auth/Locked.cs"}) == [], f"{added} {body!r}")
+files = ["src/Shop.Api/Program.cs", "tests/Shop.Tests/ShopFactory.cs", "tests/Shop.Tests/CartTests.cs", "client/src/App.jsx"]
+check("the Builder always sees the files its step or the last errors name (path, file name or class name)",
+      builder.must_see("Update ShopFactory to expose SeedUsers; the check runs `client/src/App.jsx`", files)
+      == ["tests/Shop.Tests/ShopFactory.cs", "client/src/App.jsx"]
+      and builder.must_see("tests\\Shop.Tests\\CartTests.cs(3,1): error CS1002", files) == ["tests/Shop.Tests/CartTests.cs"]
+      and builder.must_see("Add a login endpoint", files) == [], str(builder.must_see("Update ShopFactory", files)))
 
 shutil.rmtree(TMP, ignore_errors=True)
 if failures:

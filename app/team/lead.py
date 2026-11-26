@@ -36,10 +36,12 @@ def repo_brief(repo: Path) -> str:
 
 def _card_text(reply: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
-    m = re.search(r"```(?:markdown|md)?\s*\n(.*?# Job:.*?)\n```", text, re.S)
-    if m:
-        return m.group(1)
-    i = text.find("# Job:")
+    # the last card: a model can write a draft and then the card (Day 7: both were read as one, steps twice over)
+    blocks = re.findall(r"```(?:markdown|md)?\s*\n(.*?# Job:.*?)\n```", text, re.S)
+    if blocks:
+        b = blocks[-1]
+        return b[b.rfind("# Job:"):]
+    i = text.rfind("# Job:")
     return text[i:] if i >= 0 else ""
 
 
@@ -56,6 +58,20 @@ def tidy(card: jobs.JobCard, packs: list[str], client: str) -> list[str]:
         card.stack = packs[0]
     if client and card.client != client:
         card.client = client
+    seen, kept = set(), []
+    for st in card.steps:
+        key = re.sub(r"\W+", " ", st.text.lower()).strip()
+        if key not in seen:
+            seen.add(key)
+            kept.append(st)
+    if len(kept) < len(card.steps):
+        notes.append(f"{len(card.steps) - len(kept)} repeated step(s) dropped")
+        card.steps = kept
+    seen_checks: list[str] = []
+    for c in card.checks:
+        if c not in seen_checks:
+            seen_checks.append(c)
+    card.checks = seen_checks
     if len(card.steps) > MAX_STEPS:
         notes.append(f"the Lead wrote {len(card.steps)} steps; kept the first {MAX_STEPS} (ask it to split the job)")
         card.steps = card.steps[:MAX_STEPS]
@@ -118,24 +134,60 @@ def request_items(text: str) -> list[str]:
     return out if len(out) >= 2 else []
 
 
-def missing_items(s: Settings, items: list[str], card: jobs.JobCard) -> list[str]:
-    """The request items no step of the card builds whole, by the Lead's model asked on its own (no thinking).
-    An answer that can't be read counts nothing as missing: the check may only add steps, never block a job."""
+FILE_NAMED = re.compile(r"`([\w./\\-]+\.(?:cs|csproj|js|jsx|ts|tsx|json|lua|toc|py|java|kt|xml|html|css|md|toml))`")
+
+
+ROUTE_NAMED = re.compile(r"`(?:GET|POST|PUT|PATCH|DELETE)?\s*(/api/[\w/{}.?=&-]+)`", re.I)
+ONLY_TESTS = re.compile(r"\s*(?:write|add|create)\s+(?:the\s+)?(?:\w+\s+)?tests?\b", re.I)
+
+
+def unnamed_files(item: str, steps: list[jobs.Step]) -> list[str]:
+    """Files the item names in backticks that no step names (by path or file name). Day 7: the item 'SeedData in
+    `src/DropShip.Api/Data/SeedData.cs`' was judged covered by the model while the card declared it already done;
+    a file the request asks for and no step mentions is never built."""
+    text = " ".join(st.text for st in steps).replace("\\", "/").lower()
+    out = []
+    for f in FILE_NAMED.findall(item):
+        p = f.replace("\\", "/").lower()
+        if p not in text and p.rsplit("/", 1)[-1] not in text:
+            out.append(f)
+    # the same for API routes (Day 7: the admin approve/reject endpoints were only in a "write tests for" step, and
+    # the model counted the tests as building them). A route counts when some step that isn't only tests names it.
+    build_text = " ".join(st.text for st in steps if not ONLY_TESTS.match(st.text)).replace("\\", "/").lower()
+    for route in ([] if re.match(r"\s*tests?\b", item, re.I) else ROUTE_NAMED.findall(item)):
+        r = route.split("?")[0].rstrip("/").lower()
+        if r not in build_text:
+            out.append(route)
+    return out
+
+
+def missing_items(s: Settings, items: list[str], card: jobs.JobCard, job: jobs.Job | None = None) -> list[str]:
+    """The request items no step of the card builds whole: an item that names a file no step names, and those the
+    Lead's model, asked on its own, says no step builds. An answer that can't be read adds nothing: the check may
+    only add steps, never block a job."""
     if not items:
         return []
+    out = [t for t in items if unnamed_files(t, card.steps)]
     user = ("The request's items:\n" + "\n".join(f"I{i}. {t}" for i, t in enumerate(items, 1))
             + "\n\nThe job card's steps:\n" + "\n".join(f"{i}. {st.text}" for i, st in enumerate(card.steps, 1)))
-    try:
-        reply = llm.ask(s, "lead", COVERAGE_PROMPT, user, max_tokens=1500, temperature=0.0, think=False).text
-    except Exception as e:  # noqa: BLE001
-        print(f"lead: the coverage check failed: {type(e).__name__}: {e}", flush=True)
-        return []
-    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
-    out = []
+    reply = ""
+    for think in (True, False):   # thinking judges better; a thinking model that runs out of budget answers nothing
+        try:
+            reply = llm.ask(s, "lead", COVERAGE_PROMPT, user, max_tokens=6000 if think else 1500, temperature=0.0,
+                            think=think).text
+        except Exception as e:  # noqa: BLE001
+            print(f"lead: the coverage check failed: {type(e).__name__}: {e}", flush=True)
+            reply = ""
+        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
+        if re.search(r"^\s*I\d+\s*[:.]", reply, re.M):
+            break
     for m in re.finditer(r"^\s*I(\d+)\s*[:.]\s*(.*)$", reply, re.M):
         n = int(m.group(1))
         if 1 <= n <= len(items) and "missing" in m.group(2).lower() and items[n - 1] not in out:
             out.append(items[n - 1])
+    if job is not None:
+        job.log("Lead · coverage check", (reply.strip() or "(no readable answer)")
+                + ("\n\nMissing:\n" + "\n".join(f"- {t[:200]}" for t in out) if out else "\n\nNothing missing."))
     return out
 
 
@@ -173,7 +225,7 @@ def plan(s: Settings, job: jobs.Job, request: str, cover: str | None = None) -> 
         notes.append("the Lead's card couldn't be read twice, so the whole request is one step")
     else:
         items = request_items(request if cover is None else cover)
-        missing = missing_items(s, items, card)
+        missing = missing_items(s, items, card, job)
         if missing:
             text = _card_text(_ask(s, user + "\n\nYour first card left out these parts of the request (no step builds "
                                    "them whole: code, configuration and tests):\n" + "\n".join(f"- {m}" for m in missing)
@@ -181,7 +233,7 @@ def plan(s: Settings, job: jobs.Job, request: str, cover: str | None = None) -> 
                                      "of the request is in a step.", think=False))
             again = jobs.JobCard.from_markdown(text) if text else None
             if again and again.title and again.steps:
-                still = missing_items(s, items, again)
+                still = missing_items(s, items, again, job)
                 if len(still) <= len(missing):
                     card, missing = again, still
                     notes.append("the Lead rewrote its card: the first one left out part of the request")

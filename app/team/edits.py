@@ -63,6 +63,7 @@ class Parsed:
     already_done: str = ""                                 # the Builder says the code already does the step
     problems: list[str] = field(default_factory=list)   # blocks that couldn't be read: the try can't pass
     notes: list[str] = field(default_factory=list)      # blocks dropped because they changed nothing new
+    noops: list[tuple[str, str]] = field(default_factory=list)   # (path, text) of blocks whose REPLACE = SEARCH
 
 
 @dataclass
@@ -147,6 +148,7 @@ def parse(reply: str) -> Parsed:
             repeats += 1
         elif not e.new_file and e.search == e.replace:
             noops += 1
+            out.noops.append((e.path, e.search))
         else:
             seen.add(key)
             kept.append(e)
@@ -190,6 +192,31 @@ def protected_tests(repo: Path, files: list[str], test_project_dirs: set[str]) -
     Source files of a test project count too, but not its project file (adding a package reference
     is an ask-first action anyway, and the Builder may need to add a test file to it)."""
     return {f for f in files if looks_like_test(f, test_project_dirs) and not f.endswith((".csproj", ".json"))}
+
+
+TEST_CASE = re.compile(r"\[(?:Fact|Theory|Test|TestMethod|TestCase)\b|@Test\b|^\s*(?:test|it|describe)\s*\(|"
+                       r"^\s*def\s+test_|^\s*local\s+function\s+test_|\bfunction\s+test\w*\s*\(", re.M)
+
+
+def unlocked_helpers(repo: Path, client_tests: set[str], step: str) -> set[str]:
+    """The client's test helpers the step itself names: a test factory, a fixture, a builder of test data. They
+    hold no test cases, so changing them can't make a failing test pass by weakening it, and a later phase may
+    need them changed (Day 7: DropShipFactory.cs had to give the tests their seeded users, and was locked as a
+    client's test five tries running). A file with test cases stays locked even when the step names it."""
+    out = set()
+    low = step.lower()
+    for rel in client_tests:
+        name = rel.rsplit("/", 1)[-1]
+        stem = name.rsplit(".", 1)[0]
+        if not (rel.lower() in low or name.lower() in low or re.search(rf"\b{re.escape(stem.lower())}\b", low)):
+            continue
+        try:
+            text = (repo / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not TEST_CASE.search(text):
+            out.add(rel)
+    return out
 
 
 # ---- applying -----------------------------------------------------------------------------------

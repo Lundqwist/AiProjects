@@ -71,6 +71,16 @@ def changed_files(repo: Path, since: str) -> list[str]:
     return [f for f in jobs.git(repo, "diff", "--name-only", f"{since}..HEAD", check=False).splitlines() if f.strip()]
 
 
+def reference_files(repo: Path, changed: list[str], text: str) -> list[str]:
+    """Unchanged files the Checker reads too: all of a small repository (as the Builder sees it), else those the step
+    names. Day 7: on 'apply the limiter to the login endpoint' the Checker saw only Program.cs and asked three
+    rounds running for an [EnableRateLimiting("login")] that AuthController.cs already had."""
+    from team import builder   # (builder doesn't import the checker)
+    rest = [f for f in builder.repo_files(repo) if f not in changed and not f.endswith(("package-lock.json", ".md"))]
+    size = sum((repo / f).stat().st_size for f in rest if (repo / f).exists())
+    return rest if size <= builder.SMALL_REPO else builder.must_see(text, rest)
+
+
 def files_text(repo: Path, files: list[str]) -> str:
     """Changed files whole, code before tests, with line numbers (the FIX list points at lines)."""
     order = sorted(files, key=lambda f: (edits.looks_like_test(f), f))
@@ -166,6 +176,7 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
         files = [f.replace("\\", "/") for f in named if (repo / f).exists()]
         files += [f for f in (context_files or []) if f not in files and (repo / f).exists()]
     reqs = "\n".join(f"R{i}. {r}" for i, r in enumerate(requirements, 1)) or "(none listed: judge against the step)"
+    reference = reference_files(repo, files, step + "\n" + reqs)
     request = job.request()
     user = (f"Job: {card.title}\n" + (f"Goal: {card.goal}\n" if card.goal else "")
             + (f"\nFor reference only, the job's whole request (names and details come from it; the rest of it is "
@@ -179,7 +190,10 @@ def check(s: Settings, job: jobs.Job, step: str, requirements: list[str], since:
                + (f" ({already_done})" if already_done else "") + ". Judge the code as it is now.\n\n"
                if not changed_files(repo, since) else "")
             + f"The {'changed ' if changed_files(repo, since) else ''}files as they are now (line numbers on the "
-              f"left):\n\n{files_text(repo, files)}")
+              f"left):\n\n{files_text(repo, files)}"
+            + (f"\n\nOther files of the repository, unchanged by this step (for reference: what they already do "
+               f"counts, so never ask for something one of them already has):\n\n{files_text(repo, reference)}"
+               if reference else ""))
     probe = None
     probe_state = probe_state if probe_state is not None else {}
     if getattr(s, "team_probes", True) and requirements:
