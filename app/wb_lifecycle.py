@@ -7,6 +7,8 @@ Two parts:
   * hard_exit(): after the window has closed and saved, end the process at once instead of waiting
     for background threads (a stuck Ollama request, a microphone that won't stop), which used to
     leave pythonw.exe running with no window.
+  * Ollama: ensure_ollama() starts it when the workbench opens (it no longer starts at sign-in) and
+    stop_ollama() ends all of it when the workbench closes, also when it was started by hand.
 
 Programs opened *for the user* (Chrome, Spotify, a file in its default program, the updater) must
 outlive the workbench: start those with `start_independent`, which breaks them out of the job.
@@ -91,6 +93,51 @@ def open_independent(path: str) -> None:
         start_independent(["explorer.exe", path])
     else:
         os.startfile(path)  # noqa: S606
+
+
+OLLAMA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama")
+# The tray app first (it would start the server again), then the server and its model runners
+OLLAMA_IMAGES = ("ollama app.exe", "ollama.exe", "ollama_llama_server.exe")
+
+
+def _is_local(host: str) -> bool:
+    from urllib.parse import urlparse
+    name = urlparse(host if "://" in host else f"http://{host}").hostname or ""
+    return name in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+
+
+def _ollama_answers(host: str, timeout: float = 1.5) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(host.rstrip("/") + "/api/version", timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_ollama(host: str) -> bool:
+    """Start Ollama's server (hidden, inside the job) if it isn't running. True if one was started.
+
+    Ollama no longer starts at sign-in, so the workbench starts it. Being in the job, it also ends
+    if the workbench crashes or is ended in Task Manager.
+    """
+    if os.name != "nt" or not _is_local(host) or _ollama_answers(host):
+        return False
+    exe = os.path.join(OLLAMA_DIR, "ollama.exe")
+    if not os.path.exists(exe):
+        return False
+    env = {**os.environ, "OLLAMA_HOST": host.split("://", 1)[-1]}
+    subprocess.Popen([exe, "serve"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+    return True
+
+
+def stop_ollama(host: str) -> None:
+    """End every Ollama process (tray app, server, model runners), also one the user started."""
+    if os.name != "nt" or not _is_local(host):
+        return
+    for image in OLLAMA_IMAGES:
+        subprocess.run(["taskkill", "/F", "/T", "/IM", image], capture_output=True, creationflags=NO_WINDOW)
 
 
 def hard_exit(code: int = 0) -> None:

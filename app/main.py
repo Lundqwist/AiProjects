@@ -213,6 +213,9 @@ def main() -> int:
 
     loading.show()
     app.processEvents()
+    if not screenshot:  # Ollama doesn't start at sign-in: start it now, so it's up when the window opens
+        threading.Thread(target=wb_lifecycle.ensure_ollama, args=(settings.ollama_host,),
+                         name="start-ollama", daemon=True).start()
     try:
         settings.ensure_folders()
         settings.apply()
@@ -242,7 +245,10 @@ def main() -> int:
                                              shoot(i + 1)))
 
         QTimer.singleShot(2500, shoot)
-    return app.exec()
+        return app.exec()
+    code = app.exec()
+    wb_lifecycle.stop_ollama(settings.ollama_host)  # the window is closed: end Ollama, also one started by hand
+    return code
 
 
 if __name__ == "__main__":
